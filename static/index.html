@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型吞吐压测台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232f6bff'/><text x='16' y='21' font-size='12' font-weight='bold' text-anchor='middle' fill='white' font-family='sans-serif'>T</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">TPS</span>
+    <div>
+      <h1>模型吞吐压测台</h1>
+      <p class="sub">Output Throughput · TTFT · ITL / TPOT</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="conn-pill" id="connPill"><span class="dot"></span><span id="connText">连接中…</span></div>
+    <button class="btn btn-ghost" id="themeBtn" title="切换主题">◐</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ 左：配置面板 ============ -->
+  <aside class="panel config-panel">
+    <section class="group">
+      <h2>接口配置</h2>
+      <div class="field">
+        <label for="baseUrl">Base URL</label>
+        <input id="baseUrl" type="text" placeholder="https://api.openai.com" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="apiKey">API Key</label>
+        <div class="input-wrap">
+          <input id="apiKey" type="password" placeholder="sk-..." spellcheck="false">
+          <button class="mini eye" id="toggleKey" title="显示/隐藏" aria-label="显示或隐藏 API Key">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+        <label class="check"><input type="checkbox" id="rememberKey"> 记住 Key（写入本地 config.json）</label>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="apiFormat">协议</label>
+          <select id="apiFormat">
+            <option value="openai">OpenAI 兼容</option>
+            <option value="anthropic">Anthropic Messages</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="model">模型</label>
+          <input id="model" type="text" placeholder="gpt-4o-mini" spellcheck="false">
+        </div>
+      </div>
+      <div class="field">
+        <label for="path">接口路径</label>
+        <input id="path" type="text" placeholder="/v1/chat/completions" spellcheck="false">
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>请求参数</h2>
+      <div class="field">
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" rows="4" spellcheck="false"></textarea>
+        <p class="hint">支持 <code>{i}</code>（请求序号）与 <code>{n}</code>（总请求数）占位符</p>
+      </div>
+      <div class="row3">
+        <div class="field">
+          <label for="maxTokens">max_tokens</label>
+          <input id="maxTokens" type="number" min="1" max="32768" value="512">
+        </div>
+        <div class="field">
+          <label for="temperature">temperature</label>
+          <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.7">
+        </div>
+        <div class="field">
+          <label for="timeout">超时(s)</label>
+          <input id="timeout" type="number" min="5" max="600" value="120">
+        </div>
+      </div>
+      <div class="field">
+        <label for="extraBody">额外请求体 JSON</label>
+        <input id="extraBody" type="text" placeholder='{"top_p":0.9}' spellcheck="false">
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" id="includeUsage" checked> 请求 usage（精确 token 数）</label>
+        <label class="check"><input type="checkbox" id="verifyTls" checked> 校验 TLS 证书</label>
+        <label class="check"><input type="checkbox" id="keepalive"> 复用连接（TTFT 不含握手）</label>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>压测参数</h2>
+      <div class="row3">
+        <div class="field">
+          <label for="requests">总请求数</label>
+          <input id="requests" type="number" min="1" max="500" value="20">
+        </div>
+        <div class="field">
+          <label for="concurrency">并发数</label>
+          <input id="concurrency" type="number" min="1" max="64" value="4">
+        </div>
+        <div class="field">
+          <label for="warmup">预热</label>
+          <input id="warmup" type="number" min="0" max="20" value="1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="bucketMs">曲线采样桶(ms)</label>
+        <input id="bucketMs" type="number" min="20" max="1000" step="10" value="100">
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="runBtn">▶ 开始压测</button>
+      <button class="btn btn-ghost" id="stopBtn" disabled>■ 停止</button>
+      <button class="btn btn-ghost" id="probeBtn">◈ 单次探测</button>
+      <button class="btn btn-ghost" id="saveBtn">保存配置</button>
+      <button class="btn btn-ghost" id="resetBtn">恢复默认</button>
+    </div>
+    <p class="status-line" id="statusLine">就绪</p>
+  </aside>
+
+  <!-- ============ 右：结果区 ============ -->
+  <section class="results">
+
+    <!-- 关键指标卡 -->
+    <div class="kpi-grid" id="kpiGrid">
+      <div class="kpi">
+        <div class="kpi-label">聚合吞吐</div>
+        <div class="kpi-value" id="kpiTps">—<span class="unit">tok/s</span></div>
+        <div class="kpi-sub" id="kpiTpsSub">总 token ÷ 墙钟时长</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">并发解码吞吐</div>
+        <div class="kpi-value" id="kpiDec">—<span class="unit">tok/s</span></div>
+        <div class="kpi-sub" id="kpiDecSub">单请求解码速率均值</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">TTFT 平均</div>
+        <div class="kpi-value" id="kpiTtft">—<span class="unit">ms</span></div>
+        <div class="kpi-sub" id="kpiTtftSub">首 token 延迟</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">TPOT 平均</div>
+        <div class="kpi-value" id="kpiTpot">—<span class="unit">ms/tok</span></div>
+        <div class="kpi-sub" id="kpiTpotSub">每 token 生成间隔</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">输出 Token</div>
+        <div class="kpi-value" id="kpiTokens">—</div>
+        <div class="kpi-sub" id="kpiTokensSub">usage 精确计数</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">成功率</div>
+        <div class="kpi-value" id="kpiOk">—<span class="unit">%</span></div>
+        <div class="kpi-sub" id="kpiOkSub">成功 / 总请求</div>
+      </div>
+    </div>
+
+    <!-- 图表区 -->
+    <div class="chart-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>吞吐曲线</h3>
+          <div class="legend">
+            <span class="lg lg-a">累计 token</span>
+            <span class="lg lg-b">瞬时 tok/s</span>
+          </div>
+        </div>
+        <canvas id="chartTps" height="220"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>TTFT 分布</h3>
+          <div class="legend"><span class="lg lg-c">每请求首字延迟</span></div>
+        </div>
+        <canvas id="chartTtft" height="220"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>ITL 分位曲线</h3>
+          <div class="legend">
+            <span class="lg lg-p10">p10</span>
+            <span class="lg lg-p50">p50</span>
+            <span class="lg lg-p90">p90</span>
+          </div>
+        </div>
+        <canvas id="chartItl" height="220"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>TTFT / TPOT 分位</h3>
+          <div class="legend"><span class="lg lg-a">TTFT</span><span class="lg lg-b">TPOT</span></div>
+        </div>
+        <canvas id="chartPct" height="220"></canvas>
+      </div>
+    </div>
+
+    <!-- 明细表 -->
+    <div class="card">
+      <div class="card-head">
+        <h3>请求明细</h3>
+        <div class="head-tools">
+          <span class="muted" id="tableCount">0 条</span>
+          <button class="mini" id="exportJson">导出 JSON</button>
+          <button class="mini" id="exportCsv">导出 CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="resultTable">
+          <thead>
+            <tr>
+              <th>#</th><th>状态</th><th>TTFT(ms)</th><th>总耗时(ms)</th>
+              <th>生成段(ms)</th><th>输出tok</th><th>解码tok/s</th>
+              <th>端到端tok/s</th><th>TPOT(ms)</th><th>chunks</th><th>错误</th>
+            </tr>
+          </thead>
+          <tbody id="resultBody">
+            <tr class="empty"><td colspan="11">还没有数据，点「开始压测」</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 实时日志 -->
+    <div class="card">
+      <div class="card-head">
+        <h3>实时日志</h3>
+        <button class="mini" id="clearLog">清空</button>
+      </div>
+      <pre class="log" id="logBox"></pre>
+    </div>
+
+  </section>
+</main>
+
+<!-- 探测弹窗 -->
+<div class="modal" id="probeModal" hidden>
+  <div class="modal-body">
+    <div class="modal-head">
+      <h3>单次探测</h3>
+      <button class="mini" id="probeClose">✕</button>
+    </div>
+    <div class="probe-stats" id="probeStats"></div>
+    <pre class="probe-text" id="probeText"></pre>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
