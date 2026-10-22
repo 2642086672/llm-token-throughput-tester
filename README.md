@@ -41,7 +41,7 @@ python mock/mock_server.py --port 18899 --ttft 80 --itl 12 --tokens 120
 python server.py --port 8770
 ```
 
-页面上填 Base URL `http://127.0.0.1:18899`、路径 `/v1/chat/completions`、模型 `mock-fast`、Key 随意填。
+页面上填 Base URL `http://127.0.0.1:18899`、路径 `/v1/chat/completions`、模型 `mock-fast`、Key 随意填，总请求数 `8`、并发 `4`。
 
 **预期结果**：TTFT ≈ 83ms，解码速率 ≈ 77.5 tok/s（= 1000/12ms − 首字开销），成功率 100%。
 
@@ -99,25 +99,7 @@ python server.py --host 127.0.0.1 --port 8770
 
 ## 本地自测（不需要真实 API Key）
 
-开两个终端：
-
-```bash
-# 终端 1：mock 上游，模拟 ttft=80ms、每 token 间隔 12ms、共 120 token
-python mock/mock_server.py --port 18899 --ttft 80 --itl 12 --tokens 120
-
-# 终端 2：压测后端
-python server.py --port 8770
-```
-
-页面上填：
-
-- Base URL：`http://127.0.0.1:18899`
-- 路径：`/v1/chat/completions`
-- 模型：`mock-fast`
-- API Key：`test`（随意填）
-- 总请求数 `8`、并发 `4`
-
-**预期结果**：TTFT ≈ 83ms，解码速率 ≈ 77.5 tok/s（= 1000/12ms − 首字开销），成功率 100%。
+见上文「快速开始 → 不想用真实 Key？本地自测」。
 
 ## 指标口径
 
