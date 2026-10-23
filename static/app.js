@@ -9,6 +9,7 @@ const FIELDS = [
   'base_url', 'api_key', 'api_format', 'path', 'model', 'prompt',
   'max_tokens', 'temperature', 'timeout', 'extra_body',
   'include_usage', 'verify_tls', 'keepalive',
+  'thinking_provider', 'thinking_enabled', 'thinking_level', 'thinking_budget',
   'requests', 'concurrency', 'warmup', 'bucket_ms',
 ];
 
@@ -50,7 +51,121 @@ const FIELD_IDS = {
   concurrency: 'concurrency',
   warmup: 'warmup',
   bucket_ms: 'bucketMs',
+  thinking_provider: 'thinkingProvider',
+  thinking_enabled: 'thinkingEnabled',
+  thinking_level: 'thinkingLevel',
+  thinking_budget: 'thinkingBudget',
 };
+/* ------------------------------------------------------------------
+ * 思考模式
+ * 各家思考参数写法完全不同，这里维护档位表，由后端 thinking.py 翻译成 wire 格式
+ * ------------------------------------------------------------------ */
+const THINKING_LEVELS = {
+  openai:    ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+  anthropic: ['low', 'medium', 'high', 'xhigh', 'max'],
+  deepseek:  ['low', 'high', 'max'],
+  glm:       ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  qwen:      ['low', 'medium', 'xhigh'],
+  gemini:    ['minimal', 'low', 'medium', 'high'],
+  mimo:      [],
+  longcat:   [],
+};
+
+// 各家思考参数风格，键与 PROVIDERS 里的服务商对应
+const THINKING_STYLE = {
+  '小米': 'mimo',
+  'DeepSeek': 'deepseek',
+  'LongCat（美团）': 'longcat',
+  'GLM（智谱）': 'glm',
+  'Qwen（阿里通义）': 'qwen',
+  'Claude（Anthropic）': 'anthropic',
+  'Gemini（Google）': 'gemini',
+  'OpenAI': 'openai',
+  'Kimi（月之暗面）': 'qwen',
+  '豆包（火山引擎）': 'qwen',
+  '硅基流动 SiliconFlow': 'openai',
+  '百度千帆': 'openai',
+  '腾讯混元': 'openai',
+  '海外聚合': 'openai',
+  '本地部署': 'openai',
+};
+
+const LEVEL_LABEL = {
+  none: 'none（关闭思考）',
+  minimal: 'minimal（最低）',
+  low: 'low（低）',
+  medium: 'medium（中）',
+  high: 'high（高）',
+  xhigh: 'xhigh（超高）',
+  max: 'max（最深）',
+};
+
+/** 按当前风格刷新思考级别的可选项 */
+function refreshThinkingLevels() {
+  const style = $('thinkingProvider').value;
+  const sel = $('thinkingLevel');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  const levels = THINKING_LEVELS[style] || [];
+  if (!levels.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = style ? '该服务商无强度档位（仅开关）' : '—';
+    sel.appendChild(o);
+    sel.disabled = true;
+  } else {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '模型默认';
+    sel.appendChild(blank);
+    for (const lv of levels) {
+      const o = document.createElement('option');
+      o.value = lv;
+      o.textContent = LEVEL_LABEL[lv] || lv;
+      sel.appendChild(o);
+    }
+    sel.disabled = false;
+    if (prev && levels.includes(prev)) sel.value = prev;
+  }
+  // 只有 Qwen 与 LongCat 支持 token 预算
+  $('thinkingBudgetField').hidden = !(style === 'qwen' || style === 'longcat');
+  updateThinkingHint();
+}
+
+function updateThinkingHint() {
+  const style = $('thinkingProvider').value;
+  const hint = $('thinkingHint');
+  if (!hint) return;
+  if (!style) {
+    hint.textContent = '不启用时完全不下发思考参数，由模型自行决定。';
+    return;
+  }
+  const levels = THINKING_LEVELS[style] || [];
+  const lvl = $('thinkingLevel').value;
+  const en = $('thinkingEnabled').value;
+  const bits = [];
+  if (en === 'true') bits.push('开关：开启');
+  else if (en === 'false') bits.push('开关：关闭');
+  else bits.push('开关：模型默认');
+  if (levels.length) {
+    bits.push('级别：' + (lvl ? (LEVEL_LABEL[lvl] || lvl) : '模型默认'));
+  } else {
+    bits.push('级别：不支持');
+  }
+  hint.textContent = bits.join(' · ');
+}
+
+/** 服务商预设切换时，自动匹配思考参数风格 */
+function syncThinkingStyle(group) {
+  const style = THINKING_STYLE[group] || '';
+  const sel = $('thinkingProvider');
+  if (style) {
+    sel.value = style;
+  }
+  $('thinkingFields').hidden = !sel.value;
+  refreshThinkingLevels();
+}
+
 const INT_FIELDS = ['max_tokens', 'timeout', 'requests', 'concurrency', 'warmup', 'bucket_ms'];
 
 /* ------------------------------------------------------------------
@@ -197,6 +312,11 @@ function setField(name, value) {
   }
   const el = $(FIELD_IDS[name]);
   if (!el) return;
+  if (name === 'thinking_enabled') {
+    // 后端存 null / true / false，界面存 '' / 'true' / 'false'
+    el.value = value === null || value === undefined ? '' : (value ? 'true' : 'false');
+    return;
+  }
   el.value = value == null ? '' : value;
 }
 
@@ -209,7 +329,12 @@ function readForm() {
     }
     const el = $(FIELD_IDS[name]);
     if (!el) continue;
-    if (INT_FIELDS.includes(name)) {
+    if (name === 'thinking_enabled') {
+      // 三态：'' = 模型默认（不下发），'true'/'false' = 强制
+      cfg[name] = el.value === '' ? null : (el.value === 'true');
+      continue;
+    }
+    if (INT_FIELDS.includes(name) || name === 'thinking_budget') {
       cfg[name] = parseInt(el.value, 10) || 0;
     } else if (name === 'temperature') {
       cfg[name] = el.value === '' ? null : parseFloat(el.value);
@@ -227,6 +352,16 @@ function fillForm(cfg) {
   }
   // 协议切换时自动改默认路径
   syncPathByFormat();
+  // 思考面板：先按风格刷出档位选项，再把配置里的档位选回来
+  $('thinkingFields').hidden = !$('thinkingProvider').value;
+  refreshThinkingLevels();
+  if (cfg.thinking_level) {
+    const sel = $('thinkingLevel');
+    if ([...sel.options].some((o) => o.value === cfg.thinking_level)) {
+      sel.value = cfg.thinking_level;
+    }
+  }
+  updateThinkingHint();
   // 已有配置 → 尝试匹配到服务商下拉
   syncProviderSelect();
 }
@@ -269,6 +404,8 @@ function applyProvider(idx) {
   $('baseUrl').value = it.base;
   $('path').value = it.path;
   $('apiFormat').value = it.fmt;
+  // 思考参数风格跟着服务商走
+  syncThinkingStyle(it.group);
   // 模型处理：
   //   - 预设有默认模型 → 覆盖（当前值为空，或仍是某个预设的默认值）
   //   - 预设无默认模型（本地部署）→ 若当前值是某个预设的默认值就清空，
@@ -445,7 +582,7 @@ async function runBench() {
   $('stopBtn').disabled = false;
   $('probeBtn').disabled = true;
   setStatus('压测运行中…', 'run');
-  $('resultBody').innerHTML = '<tr class="empty"><td colspan="12">等待结果…</td></tr>';
+  $('resultBody').innerHTML = '<tr class="empty"><td colspan="14">等待结果…</td></tr>';
   $('tableCount').textContent = '0 条';
   resetKpi();
   drawAll(null);
@@ -527,13 +664,29 @@ function renderResult(data) {
   setKpi('kpiDec', fmt(s.aggregate_decode_tps, 2));
   $('kpiDecSub').textContent = `单请求均值 ${fmt(s.avg_decode_tps, 2)} tok/s`;
   setKpi('kpiTtft', fmt(s.avg_ttft_ms, 0));
-  $('kpiTtftSub').textContent = `p50 ${fmt(s.p50_ttft_ms, 0)} / p95 ${fmt(s.p95_ttft_ms, 0)} ms`;
+  // 思考模式下 TTFT 是"首个输出 token"，用户真正看到字要等答案开始
+  if (s.avg_answer_ttft_ms != null) {
+    $('kpiTtftSub').textContent = `p95 ${fmt(s.p95_ttft_ms, 0)}ms · 答案首字 ${fmt(s.avg_answer_ttft_ms, 0)}ms`;
+  } else {
+    $('kpiTtftSub').textContent = `p50 ${fmt(s.p50_ttft_ms, 0)} / p95 ${fmt(s.p95_ttft_ms, 0)} ms`;
+  }
   setKpi('kpiTpot', fmt(s.avg_tpot_ms, 2));
   $('kpiTpotSub').textContent = `p50 ${fmt(s.p50_tpot_ms, 2)} / p95 ${fmt(s.p95_tpot_ms, 2)}`;
   setKpi('kpiTokens', s.total_output_tokens);
-  $('kpiTokensSub').textContent = `上游 usage 精确 ${s.tokens_from_usage} 条 · 本地估算 ${s.tokens_from_estimate} 条`;
+  // 思考 token 单独标注，因为它已包含在总输出 token 里
+  const rk = s.total_reasoning_tokens || 0;
+  const rkPct = s.total_output_tokens > 0 ? (rk / s.total_output_tokens * 100) : 0;
+  $('kpiTokensSub').textContent = rk > 0
+    ? `其中思考 ${rk} tok (${rkPct.toFixed(1)}%) · 口径 usage ${s.tokens_from_usage}/估算 ${s.tokens_from_estimate}`
+    : `上游 usage 精确 ${s.tokens_from_usage} 条 · 本地估算 ${s.tokens_from_estimate} 条`;
   setKpi('kpiOk', fmt(s.success_rate, 1));
   $('kpiOkSub').textContent = `${s.ok} / ${s.requests} 成功`;
+
+  // 思考模式实际生效情况
+  const th = data.thinking;
+  if (th && th.provider) {
+    log(`思考模式：${th.note}`, '#5b8cff');
+  }
 
   // 明细表整体重绘：progress 阶段已逐行追加，这里用最终数据整体替换，
   // 保证字段完整（progress 事件里的记录是精简版，缺 itl/text_head）
@@ -547,7 +700,7 @@ function renderTable(records) {
   const body = $('resultBody');
   body.innerHTML = '';
   if (!records.length) {
-    body.innerHTML = '<tr class="empty"><td colspan="12">还没有数据，点「开始压测」</td></tr>';
+    body.innerHTML = '<tr class="empty"><td colspan="14">还没有数据，点「开始压测」</td></tr>';
     return;
   }
   for (const r of records) appendRow(r);
@@ -573,9 +726,11 @@ function appendRow(r) {
     r.seq,
     r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge err">FAIL</span>',
     fmt(r.ttft_ms, 1),
+    r.answer_ttft_ms != null ? fmt(r.answer_ttft_ms, 1) : '—',
     fmt(r.total_ms, 1),
     fmt(r.gen_ms, 1),
     r.output_tokens,
+    r.reasoning_tokens ? `<span class="src-tag src-th" title="思考 token（含在输出 token 内）">${r.reasoning_tokens}</span>` : '0',
     `<span class="src-tag src-${r.token_source === 'usage' ? 'u' : 'e'}" title="${srcTitle}">${srcLabel}</span>`,
     fmt(r.decode_tps, 2),
     fmt(r.e2e_tps, 2),
@@ -585,7 +740,7 @@ function appendRow(r) {
   ];
   cells.forEach((c, i) => {
     const td = document.createElement('td');
-    if (i === 0 || i === 1 || i === 6 || i === 11) td.innerHTML = c;
+    if (i === 0 || i === 1 || i === 7 || i === 8 || i === 12) td.innerHTML = c;
     else td.textContent = c;
     tr.appendChild(td);
   });
@@ -763,9 +918,12 @@ function drawTtftChart(data) {
   drawFrame(ctx, box, '请求序号', 'TTFT (ms)', ttftTicks);
 
   const n = vals.length;
-  const bw = Math.max(2, Math.min(26, box.w / n - 2));
+  // 按槽位均分居中，而不是把第 1 根和第 n 根钉在两端。
+  // 后者在请求数少（n=2/3）时中间会留大片空白，看起来像数据丢了。
+  const slot = box.w / n;
+  const bw = Math.max(2, Math.min(26, slot - 2));
   vals.forEach((v, i) => {
-    const px = box.x + (i / Math.max(1, n - 1)) * (box.w - bw) + bw / 2;
+    const px = box.x + slot * i + slot / 2;
     const ph = (v / ttftTop) * box.h;
     const hot = v > outlierLine;
     ctx.fillStyle = hot ? hexA(cssVar('--b'), .85) : hexA(cssVar('--c'), .8);
@@ -986,7 +1144,8 @@ function exportJson() {
 
 function exportCsv() {
   if (!lastResult) { setStatus('暂无结果可导出', 'err'); return; }
-  const head = ['seq', 'ok', 'ttft_ms', 'total_ms', 'gen_ms', 'output_tokens',
+  const head = ['seq', 'ok', 'ttft_ms', 'answer_ttft_ms', 'total_ms', 'gen_ms',
+    'output_tokens', 'reasoning_tokens', 'reasoning_chunks',
     'decode_tps', 'e2e_tps', 'tpot_ms', 'chunks', 'chars', 'token_source', 'error'];
   const lines = [head.join(',')];
   for (const r of lastResult.records) {
@@ -1036,6 +1195,12 @@ function bind() {
   });
   $('provider').addEventListener('change', (e) => applyProvider(parseInt(e.target.value, 10)));
   $('fetchModelsBtn').addEventListener('click', fetchModels);
+  $('thinkingProvider').addEventListener('change', () => {
+    $('thinkingFields').hidden = !$('thinkingProvider').value;
+    refreshThinkingLevels();
+  });
+  $('thinkingLevel').addEventListener('change', updateThinkingHint);
+  $('thinkingEnabled').addEventListener('change', updateThinkingHint);
   // 手动改 base/path/format 时，下拉自动跳到自定义，避免显示的预设与实际不符
   ['baseUrl', 'path'].forEach((id) => {
     $(id).addEventListener('change', syncProviderSelect);

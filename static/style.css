@@ -316,7 +316,8 @@ thead th {
   white-space: nowrap;
   z-index: 2;
 }
-thead th:nth-child(1), thead th:nth-child(2), thead th:nth-child(7), thead th:last-child { text-align: left; }
+thead th:nth-child(1), thead th:nth-child(2), thead th:nth-child(8),
+thead th:nth-child(9), thead th:last-child { text-align: left; }
 tbody td {
   padding: 7px 11px;
   border-bottom: 1px solid var(--border);
@@ -324,7 +325,8 @@ tbody td {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-tbody td:nth-child(1), tbody td:nth-child(2), tbody td:nth-child(7), tbody td:last-child { text-align: left; }
+tbody td:nth-child(1), tbody td:nth-child(2), tbody td:nth-child(8),
+tbody td:nth-child(9), tbody td:last-child { text-align: left; }
 tbody tr:hover { background: var(--accent-soft); }
 tbody tr.empty td { text-align: center; color: var(--muted); padding: 26px; }
 .badge {
@@ -347,6 +349,9 @@ tbody tr.empty td { text-align: center; color: var(--muted); padding: 26px; }
 }
 .src-u { background: rgba(47,107,255,.13); color: var(--accent); }
 .src-e { background: rgba(247,144,9,.16); color: var(--warn); }
+/* 思考 token：紫色系，与答案 token 区分开 */
+.src-th { background: rgba(124,58,237,.14); color: #7c3aed; }
+body.dark .src-th { background: rgba(139,92,246,.2); color: #a78bfa; }
 .err-text { color: var(--err); font-size: 11.5px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- 日志 ---------- */

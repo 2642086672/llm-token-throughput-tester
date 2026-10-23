@@ -33,6 +33,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 try:
+    from thinking import apply_thinking, thinking_note
+except ImportError:  # 直接以脚本方式运行时也保证能找到同目录模块
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from thinking import apply_thinking, thinking_note
+
+try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 except Exception:
@@ -55,6 +63,10 @@ DEFAULT_CONFIG = {
     "temperature": 0.7,
     "include_usage": True,           # OpenAI 兼容协议下请求 usage 统计
     "extra_body": "",                # 追加到请求体的 JSON 片段（字符串）
+    "thinking_provider": "",         # 思考参数风格：openai/anthropic/deepseek/glm/qwen/gemini/mimo/longcat
+    "thinking_enabled": None,        # None=用模型默认；True/False=强制开关
+    "thinking_level": "",            # 强度档位，见 thinking.py LEVELS
+    "thinking_budget": 0,           # token 预算（Qwen / LongCat 用）
     "timeout": 120,                  # 单请求超时（秒）
     "verify_tls": True,
     "keepalive": False,              # 是否复用 TCP 连接（影响 TTFT 口径）
@@ -216,9 +228,12 @@ class Upstream:
             raise UpstreamError(f"HTTP {resp.status} {resp.reason}: {raw[:400]}")
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        reasoning_chunks = 0
         usage = None
-        chunks: list[tuple[float, str]] = []   # (相对秒, 增量文本)
+        chunks: list[tuple[float, str]] = []   # (相对秒, 增量文本，含思考)
         ttft = None
+        answer_ttft = None
 
         if "application/json" in ctype and "event-stream" not in ctype:
             # 上游没走流式，退化成整体 JSON
@@ -228,16 +243,26 @@ class Upstream:
             except Exception:
                 obj = {}
             content = ""
+            think = ""
             ch = obj.get("choices")
             if isinstance(ch, list) and ch:
                 msg = ch[0].get("message") or {}
                 content = msg.get("content") or ch[0].get("text") or ""
+                think = msg.get("reasoning_content") or msg.get("thinking") or ""
             if isinstance(obj.get("usage"), dict):
                 usage = obj["usage"]
+            now = time.perf_counter() - t0
+            if think:
+                reasoning_parts.append(think)
+                reasoning_chunks += 1
+                chunks.append((now, think))
+                ttft = now
             if content:
                 text_parts.append(content)
-                chunks.append((time.perf_counter() - t0, content))
-                ttft = time.perf_counter() - t0
+                chunks.append((now, content))
+                if ttft is None:
+                    ttft = now
+                answer_ttft = now
         else:
             for raw_line in _iter_lines(resp):
                 line = raw_line.decode("utf-8", "replace").strip()
@@ -252,23 +277,38 @@ class Upstream:
                     obj = json.loads(data)
                 except Exception:
                     continue
-                delta, u = _parse_delta(obj)
+                delta, reasoning, u = _parse_delta(obj)
                 if u:
                     usage = u
-                if delta:
-                    now = time.perf_counter()
+                now = time.perf_counter()
+                # 思考增量先于答案到达，但它同样计入输出 token，
+                # 所以计入 chunks（影响 ITL 与吞吐曲线），只是不计入 text。
+                if reasoning:
                     if ttft is None:
                         ttft = now - t0
+                    reasoning_parts.append(reasoning)
+                    reasoning_chunks += 1
+                    chunks.append((now - t0, reasoning))
+                if delta:
+                    if ttft is None:
+                        ttft = now - t0
+                    if answer_ttft is None:
+                        answer_ttft = now - t0
                     text_parts.append(delta)
                     chunks.append((now - t0, delta))
 
         total = time.perf_counter() - t0
         if ttft is None:
             ttft = total
+        if answer_ttft is None:
+            answer_ttft = None      # 纯思考没有答案
         return {
             "text": "".join(text_parts),
+            "reasoning": "".join(reasoning_parts),
+            "reasoning_chunks": reasoning_chunks,
             "usage": usage,
             "ttft": ttft,
+            "answer_ttft": answer_ttft,
             "total": total,
             "chunks": chunks,
         }
@@ -297,9 +337,19 @@ def _iter_lines(resp):
 
 
 def _parse_delta(obj: dict):
-    """同时兼容 OpenAI chat/completions 与 Anthropic messages 两种流式格式。"""
+    """同时兼容 OpenAI chat/completions 与 Anthropic messages 两种流式格式。
+
+    返回 (content_delta, reasoning_delta, usage)：
+      content   —— 最终答案的增量
+      reasoning —— 思维链增量。思考模式下模型先吐这一路，它同样计入
+                   输出 token 与计费，但不算"答案"。各家字段名不同：
+                     OpenAI 兼容 : delta.reasoning_content
+                     Anthropic   : content_block_delta 里的 thinking 块
+                     Gemini      : delta.reasoning_content
+    """
     usage = None
     delta = None
+    reasoning = None
     if isinstance(obj.get("usage"), dict):
         usage = obj["usage"]
     choices = obj.get("choices")
@@ -309,13 +359,26 @@ def _parse_delta(obj: dict):
             delta = d["content"]
         elif isinstance(d.get("text"), str):
             delta = d["text"]
+        # 思考增量：OpenAI 兼容与 Gemini 通用
+        for k in ("reasoning_content", "reasoning", "thinking"):
+            v = d.get(k)
+            if isinstance(v, str) and v:
+                reasoning = v
+                break
     if obj.get("type") == "content_block_delta":
         d = obj.get("delta") or {}
         if isinstance(d.get("text"), str):
             delta = d["text"]
+        # Anthropic 思考块走 thinking 字段
+        if isinstance(d.get("thinking"), str) and d["thinking"]:
+            reasoning = d["thinking"]
+    if obj.get("type") == "thinking_delta":
+        d = obj.get("delta") or {}
+        if isinstance(d.get("thinking"), str) and d["thinking"]:
+            reasoning = d["thinking"]
     if obj.get("type") == "message_delta" and isinstance(obj.get("usage"), dict):
         usage = obj["usage"]
-    return delta, usage
+    return delta, reasoning, usage
 
 
 def _models_path_from_chat(chat_path: str, api_format) -> str:
@@ -387,6 +450,8 @@ def build_request(cfg: dict, prompt: str):
             body["stream_options"] = {"include_usage": True}
     if cfg.get("temperature") is not None:
         body["temperature"] = cfg["temperature"]
+    # 思考模式参数（各家写法不同，由 thinking.py 按服务商翻译）
+    apply_thinking(body, cfg)
     extra = cfg.get("extra_body")
     if extra:
         try:
@@ -422,6 +487,9 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
         "tpot_ms": None,
         "chunks": 0,
         "chars": 0,
+        "reasoning_tokens": 0,
+        "reasoning_chunks": 0,
+        "answer_ttft_ms": None,
         "start_rel_ms": 0.0,
         "first_rel_ms": None,
         "end_rel_ms": 0.0,
@@ -443,6 +511,7 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
         return rec
 
     text = res["text"]
+    reasoning_text = res.get("reasoning") or ""
     usage = res["usage"] or {}
     comp = usage.get("completion_tokens")
     if comp is None:
@@ -450,20 +519,34 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
     prm = usage.get("prompt_tokens")
     if prm is None:
         prm = usage.get("input_tokens")
+    # 思考 token：优先取上游的 completion_tokens_details.reasoning_tokens
+    detail = usage.get("completion_tokens_details")
+    if not isinstance(detail, dict):
+        detail = usage.get("output_tokens_details")
+    reason_tok = None
+    if isinstance(detail, dict):
+        for k in ("reasoning_tokens", "thoughts_token_count", "reasoning_token_count"):
+            v = detail.get(k)
+            if isinstance(v, int):
+                reason_tok = v
+                break
 
     # token 计数口径：
     #   1) 上游给了 usage 且我们请求了 usage → 用上游的精确值（completion_tokens）
     #   2) 否则 → 本地估算（tiktoken 优先，没有则启发式）
     # 只看"上游有没有返回 usage"是不够的：用户主动关掉「请求 usage」时，
     # 期望的是估算口径，若仍采信上游返回值会与设置不符。
+    # 注意：上游的 completion_tokens 已包含思考 token，估算时也必须把思考文本算进去。
     want_usage = bool(cfg.get("include_usage", True))
-    est = count_tokens(text)
+    est = count_tokens(text) + count_tokens(reasoning_text)
     if want_usage and comp:
         final_tokens = int(comp)
         rec["token_source"] = "usage"
     else:
         final_tokens = est
         rec["token_source"] = "estimated"
+    if reason_tok is None:
+        reason_tok = count_tokens(reasoning_text)
 
     total = res["total"]
     ttft = res["ttft"]
@@ -479,6 +562,12 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
     rec["prompt_tokens"] = int(prm) if (want_usage and prm) else count_tokens(cfg.get("prompt") or "")
     rec["chars"] = len(text)
     rec["chunks"] = len(res["chunks"])
+    rec["reasoning_tokens"] = int(reason_tok or 0)
+    rec["reasoning_chunks"] = res.get("reasoning_chunks", 0)
+    # 答案首字延迟：思考模式下 TTFT 是"首个输出 token"，
+    # 用户真正看到字要等到答案开始，这两者差别很大，分开报。
+    at = res.get("answer_ttft")
+    rec["answer_ttft_ms"] = (at * 1000) if at is not None else None
     rec["decode_tps"] = (final_tokens / gen) if gen > 1e-6 else 0.0
     rec["e2e_tps"] = (final_tokens / total) if total > 1e-6 else 0.0
     if final_tokens > 1:
@@ -499,6 +588,7 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
     rec["_itl"] = [ (res["chunks"][i][0] - res["chunks"][i-1][0]) * 1000
                     for i in range(1, len(res["chunks"])) ]
     rec["_text"] = text
+    rec["_reasoning"] = reasoning_text
     return rec
 
 
@@ -635,6 +725,12 @@ def _aggregate(cfg: dict, records: list[dict], errors: dict, t_origin: float) ->
         "success_rate": r2((len(ok_recs) / len(records) * 100) if records else 0.0, 1),
         "total_output_tokens": total_tokens,
         "total_prompt_tokens": total_prompt_tokens,
+        # 思考 token：包含在 total_output_tokens 里（上游 completion_tokens 已含），
+        # 这里单列出来，方便看思考占了多大比例
+        "total_reasoning_tokens": sum(r.get("reasoning_tokens") or 0 for r in ok_recs),
+        "requests_with_reasoning": sum(1 for r in ok_recs if (r.get("reasoning_tokens") or 0) > 0),
+        "avg_answer_ttft_ms": r2(avg([r["answer_ttft_ms"] for r in ok_recs
+                                       if r.get("answer_ttft_ms") is not None]), 1),
         "wall_time_ms": r2(wall * 1000, 1),
         # 聚合吞吐 = 总输出 token / 墙钟时长（系统整体吐字速率）
         "aggregate_tps": r2(total_tokens / wall if wall > 0 else 0.0, 2),
@@ -692,6 +788,13 @@ def _aggregate(cfg: dict, records: list[dict], errors: dict, t_origin: float) ->
         "config": {k: cfg.get(k) for k in
                    ("base_url", "model", "api_format", "path", "requests", "concurrency",
                     "max_tokens", "keepalive", "warmup")},
+        "thinking": {
+            "provider": cfg.get("thinking_provider") or "",
+            "enabled": cfg.get("thinking_enabled"),
+            "level": cfg.get("thinking_level") or "",
+            "budget": cfg.get("thinking_budget") or 0,
+            "note": thinking_note(cfg),
+        },
     }
 
 

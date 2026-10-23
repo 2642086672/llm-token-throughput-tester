@@ -11,6 +11,8 @@
 - **六项核心指标**：聚合吞吐、并发解码吞吐、TTFT、TPOT、输出 token、成功率
 - **四张图表**：吞吐曲线（累计 token + 瞬时 tok/s）、TTFT 分布、ITL 分位曲线（p10/p50/p90）、TTFT/TPOT 分位对比
 - **31 个服务商预设**：小米 MiMo / DeepSeek / LongCat / GLM / Qwen / Claude / Gemini / OpenAI / Kimi / 豆包 / 硅基流动 / 千帆 / 混元 / Groq 等，选完自动填好接入点，不用记路径
+- **思考模式支持**：开关 + 思考级别，按各家官方参数格式自动翻译（OpenAI / Claude / DeepSeek / GLM / Qwen / Gemini / MiMo / LongCat 八种风格）
+- **思考 token 单独统计**：思维链走 `reasoning_content`，计入吞吐但不算答案；TTFT 与「答案首字延迟」分开报
 - **一键拉取模型列表**：后端代理调上游 `/models`，模型名也不用记
 - **Token 口径透明**：每条请求都标明 token 是上游 `usage` 精确值还是本地估算；空 chunk 一律过滤，空帧不会污染 TTFT
 - **并发梯度压测**：调并发数看吞吐何时饱和、TTFT 何时开始劣化
@@ -57,6 +59,7 @@ python server.py --port 8770
 ```
 llm-token-throughput-tester/
 ├── server.py              压测后端：SSE 代理 + 计时 + 统计聚合 + 静态托管
+├── thinking.py            思考模式参数映射：各家 wire 格式的翻译层
 ├── config.json            默认配置（前端「保存配置」写入，原子替换）
 ├── static/
 │   ├── index.html         前端页面
@@ -65,7 +68,9 @@ llm-token-throughput-tester/
 ├── mock/
 │   ├── mock_server.py      模拟 OpenAI 兼容流式接口，本地自测用
 │   ├── mock_edge_cases.py  发「脏 chunk」（空串/null/空对象/空格），验证过滤逻辑
-│   └── mock_no_usage.py    只发内容不发 usage，验证本地估算路径
+│   ├── mock_no_usage.py    只发内容不发 usage，验证本地估算路径
+│   └── mock_thinking.py    先吐思维链再吐答案，验证思考模式统计
+├── test_thinking.py       思考参数映射单元测试（标准库即可跑）
 ├── e2e_test.js            Playwright 端到端验收脚本（开发用，非运行必需）
 └── README.md
 ```
@@ -209,6 +214,52 @@ SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计
 
 本地 vLLM / Ollama 走这条路最省事——`http://127.0.0.1:11434/v1` 拉一下就知道当前装了哪些模型。
 
+## 思考模式
+
+页面上有独立的「思考模式」区块：**开关**（模型默认 / 开启 / 关闭）+ **思考级别**。选服务商预设时会自动切到对应的参数风格，也可以手动改。
+
+各家的思考参数写法完全不同，工具按服务商翻译成对应的 wire 格式（下表均已核对官方文档）：
+
+| 参数风格 | 对应服务商 | 实际发出的参数 | 支持的级别 |
+|---|---|---|---|
+| OpenAI | OpenAI、硅基流动、千帆、混元、海外聚合、本地部署 | `reasoning.effort` | none / minimal / low / medium / high / xhigh |
+| Claude | Claude | `thinking.type=adaptive` + `output_config.effort` | low / medium / high / xhigh / max |
+| DeepSeek | DeepSeek | `thinking.type` + `reasoning_effort` | low / high / max |
+| GLM | 智谱 GLM | `thinking.type` + `reasoning_effort` | none / minimal / low / medium / high / xhigh / max |
+| Qwen | Qwen、Kimi、豆包 | `enable_thinking` + `reasoning_effort` 或 `thinking_budget` | low / medium / xhigh |
+| Gemini | Gemini | `google.thinking_config.thinking_level` + `include_thoughts` | minimal / low / medium / high |
+| MiMo | 小米 | `thinking.type` | 无档位（仅开关） |
+| LongCat | LongCat 美团 | `thinking.type` + `thinking_budget` | 无档位（token 预算） |
+
+几个坑：
+
+- **OpenAI 没有独立的思考开关**，`reasoning.effort=none` 就是关闭
+- **小米 MiMo 只有开关没有档位**——文档明确写了只支持 `thinking.type` 的 enabled/disabled，选了档位会被忽略，页面会提示
+- **Qwen3.8 系列不允许 `reasoning_effort` 与 `thinking_budget` 同时设置**，工具按优先级只发其中一个
+- **Claude 老的 `budget_tokens` 方式在新模型上会 400**，现在用 `thinking.type=adaptive` + `output_config.effort`
+- **DeepSeek 思考模式下 temperature / top_p 不生效**（不会报错，但会被忽略）
+- **GLM 的 `none` 和 `minimal` 会让模型放弃思考**，`low` / `medium` 映射为 `high`，`xhigh` 映射为 `max`
+
+### 思考 token 单独统计
+
+思考模式有个容易算错的地方：模型的思维链走 `reasoning_content` 字段，**不在 `content` 里**，但**照样计入输出 token 和计费**。
+
+工具的处理：
+
+- 思维链增量计入 `chunks`——它参与了吞吐曲线和 ITL 统计，那才是真实的吐字节奏
+- 思维链**不进答案文本**，探针弹窗显示的仍是最终答案
+- 思考 token 数从上游 `usage.completion_tokens_details.reasoning_tokens` 读，读不到就用本地估算
+- 明细表「思考tok」列用紫色标签单独标出
+
+### TTFT 与答案首字延迟
+
+**思考模式下这两个数必须分开看**：
+
+- **TTFT** = 首个输出 token 的时间。思考模式下这就是思维链的第一帧，往往只有几毫秒
+- **答案首字** = 用户真正看到第一个字的���间。思维链走完才开始出答案
+
+实测差距能到两个数量级——TTFT 显示 1ms 但答案首字 127ms。只看 TTFT 会严重低估体感延迟。表格里两列都有，KPI 副标也会在有思考内容时同时显示。
+
 ## 协议支持
 
 **OpenAI 兼容**（`/v1/chat/completions` 等）——上面预设表里除 Claude 外全部走这套。
@@ -231,6 +282,10 @@ SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计
 | 复用连接 | 见上文 TTFT 口径说明 |
 | 预热 | 先跑 N 条不计入统计，把连接建立、TLS 握手、首次 JIT 等一次性开销挪出去 |
 | 曲线采样桶 | 吞吐曲线的时间粒度，默认 100ms |
+| 思考参数风格 | 决定思考参数怎么写，见「思考模式」章节 |
+| 思考开关 | 三态：模型默认（不下发）/ 开启 / 关闭 |
+| 思考级别 | 强度档位，可选值由服务商决定 |
+| 思考 token 预算 | 只有 Qwen 与 LongCat 用，其余服务商忽略 |
 
 **API Key 默认不落盘**。只有勾了「记住 Key」才会写进 `config.json`（本机文件，注意 `config.json` 别进版本库）。
 
@@ -238,7 +293,9 @@ SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计
 
 - 6 张 KPI 卡：聚合吞吐、并发解码吞吐、TTFT 均值、TPOT 均值、输出 token、成功率
 - 4 张图表：吞吐曲线（累计 token + 瞬时 tok/s）、TTFT 分布、ITL 分位曲线（p10/p50/p90）、TTFT/TPOT 分位对比
-- 请求明细表：每条请求的完整计时
+- 31 个服务商预设：选完自动填好 Base URL、接口路径、协议、模型、思考参数风格
+- 思考模式面板：开关 + 思考级别，按各家官方格式自动翻译
+- 请求明细表：每条请求的完整计时，含思考 token 数与答案首字延迟
 - 实时日志：逐条请求到达即打印
 - 导出 JSON / CSV
 - 单次探测：弹窗看原文 + 计时，不跑压测
@@ -263,6 +320,13 @@ SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计
 - 全部 `估算` 且你关心绝对值 → 装 `tiktoken` 提高精度，或确认上游支持 `stream_options.include_usage`
 
 估算口径下**吞吐的相对趋势依然可信**——比如"并发从 1 到 8 吞吐涨了 4 倍"这个结论不会因为 token 计数有 5% 的系统性偏差而改变。
+
+**思考模式下**重点看两个差值：
+
+- **思考 token 占比** = 思考 tok ÷ 输出 tok。占比高说明模型把大部分算力花在推理上，答案本身很短
+- **答案首字延迟 − TTFT** = 思维链耗时。思考级别调高时这个差值会明显拉长，而聚合吞吐可能几乎不变（服务端每 token 的生成速率是稳定的）
+
+想对比不同思考级别的吞吐，就固定并发和 prompt，只改思考级别跑几轮——这是这个工具最实用的用法之一。
 
 ## 常见问题
 

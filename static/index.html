@@ -116,6 +116,45 @@
     </section>
 
     <section class="group">
+      <h2>思考模式</h2>
+      <div class="field">
+        <label for="thinkingProvider">参数风格（按服务商选）</label>
+        <select id="thinkingProvider">
+          <option value="">不启用（用模型默认）</option>
+          <option value="openai">OpenAI · reasoning.effort</option>
+          <option value="anthropic">Claude · thinking + output_config.effort</option>
+          <option value="deepseek">DeepSeek · thinking + reasoning_effort</option>
+          <option value="glm">GLM · thinking + reasoning_effort</option>
+          <option value="qwen">Qwen · enable_thinking + reasoning_effort</option>
+          <option value="gemini">Gemini · google.thinking_config</option>
+          <option value="mimo">小米 MiMo · thinking（仅开关）</option>
+          <option value="longcat">LongCat · thinking + thinking_budget</option>
+        </select>
+      </div>
+      <div id="thinkingFields" hidden>
+        <div class="row2">
+          <div class="field">
+            <label for="thinkingEnabled">思考开关</label>
+            <select id="thinkingEnabled">
+              <option value="">模型默认</option>
+              <option value="true">开启</option>
+              <option value="false">关闭</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="thinkingLevel">思考级别</label>
+            <select id="thinkingLevel"></select>
+          </div>
+        </div>
+        <div class="field" id="thinkingBudgetField" hidden>
+          <label for="thinkingBudget">思考 token 预算</label>
+          <input id="thinkingBudget" type="number" min="0" max="262144" step="1024" value="4096">
+        </div>
+        <p class="hint" id="thinkingHint"></p>
+      </div>
+    </section>
+
+    <section class="group">
       <h2>压测参数</h2>
       <div class="row3">
         <div class="field">
@@ -240,13 +279,13 @@
         <table id="resultTable">
           <thead>
             <tr>
-              <th>#</th><th>状态</th><th>TTFT(ms)</th><th>总耗时(ms)</th>
-              <th>生成段(ms)</th><th>输出tok</th><th>口径</th><th>解码tok/s</th>
+              <th>#</th><th>状态</th><th>TTFT(ms)</th><th>答案首字(ms)</th><th>总耗时(ms)</th>
+              <th>生成段(ms)</th><th>输出tok</th><th>思考tok</th><th>口径</th><th>解码tok/s</th>
               <th>端到端tok/s</th><th>TPOT(ms)</th><th>chunks</th><th>错误</th>
             </tr>
           </thead>
           <tbody id="resultBody">
-            <tr class="empty"><td colspan="12">还没有数据，点「开始压测」</td></tr>
+            <tr class="empty"><td colspan="14">还没有数据，点「开始压测」</td></tr>
           </tbody>
         </table>
       </div>
