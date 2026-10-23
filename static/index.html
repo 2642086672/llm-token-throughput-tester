@@ -30,8 +30,14 @@
     <section class="group">
       <h2>接口配置</h2>
       <div class="field">
+        <label for="provider">服务商</label>
+        <select id="provider"></select>
+        <p class="hint" id="providerHint">选完自动填好 Base URL 与接口路径</p>
+      </div>
+      <div class="field">
         <label for="baseUrl">Base URL</label>
-        <input id="baseUrl" type="text" placeholder="https://api.openai.com" spellcheck="false">
+        <input id="baseUrl" type="text" placeholder="https://api.openai.com" spellcheck="false" list="baseUrlList">
+        <datalist id="baseUrlList"></datalist>
       </div>
       <div class="field">
         <label for="apiKey">API Key</label>
@@ -56,12 +62,24 @@
         </div>
         <div class="field">
           <label for="model">模型</label>
-          <input id="model" type="text" placeholder="gpt-4o-mini" spellcheck="false">
+          <input id="model" type="text" placeholder="gpt-4o-mini" spellcheck="false" list="modelList">
+          <datalist id="modelList"></datalist>
         </div>
       </div>
+      <button class="btn btn-ghost btn-block" id="fetchModelsBtn">拉取模型列表</button>
       <div class="field">
         <label for="path">接口路径</label>
-        <input id="path" type="text" placeholder="/v1/chat/completions" spellcheck="false">
+        <input id="path" type="text" placeholder="/v1/chat/completions" spellcheck="false" list="pathList">
+        <datalist id="pathList">
+          <option value="/v1/chat/completions"></option>
+          <option value="/v1/messages"></option>
+          <option value="/chat/completions"></option>
+          <option value="/openai/v1/chat/completions"></option>
+          <option value="/anthropic/v1/messages"></option>
+          <option value="/compatible-mode/v1/chat/completions"></option>
+          <option value="/v2/chat/completions"></option>
+          <option value="/api/paas/v4/chat/completions"></option>
+        </datalist>
       </div>
     </section>
 

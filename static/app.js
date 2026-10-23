@@ -53,6 +53,143 @@ const FIELD_IDS = {
 };
 const INT_FIELDS = ['max_tokens', 'timeout', 'requests', 'concurrency', 'warmup', 'bucket_ms'];
 
+/* ------------------------------------------------------------------
+ * 服务商预设表
+ * base: Base URL（不含接口路径，与页面字段一一对应）
+ * path: 接口路径（与 base 拼出最终请求地址）
+ * fmt : openai | anthropic
+ * 默认模型只作兜底，实际以「拉取模型列表」返回的为准
+ * ------------------------------------------------------------------ */
+const PROVIDERS = [
+  {
+    group: '小米',
+    items: [
+      { label: 'MiMo · 按量付费 · OpenAI', base: 'https://api.xiaomimimo.com/v1', path: '/chat/completions', fmt: 'openai', model: 'mimo-v2.6-pro' },
+      { label: 'MiMo · 按量付费 · Anthropic', base: 'https://api.xiaomimimo.com/anthropic', path: '/v1/messages', fmt: 'anthropic', model: 'mimo-v2.6-pro' },
+      { label: 'MiMo · Token Plan 订阅 · OpenAI', base: 'https://token-plan-cn.xiaomimimo.com/v1', path: '/chat/completions', fmt: 'openai', model: 'mimo-v2.6-pro' },
+      { label: 'MiMo · Token Plan 订阅 · Anthropic', base: 'https://token-plan-cn.xiaomimimo.com/anthropic', path: '/v1/messages', fmt: 'anthropic', model: 'mimo-v2.6-pro' },
+    ],
+  },
+  {
+    group: 'DeepSeek',
+    items: [
+      { label: 'DeepSeek 官方', base: 'https://api.deepseek.com', path: '/v1/chat/completions', fmt: 'openai', model: 'deepseek-chat' },
+      { label: 'DeepSeek 官方 · 短域名', base: 'https://api.deepseek.com/v1', path: '/chat/completions', fmt: 'openai', model: 'deepseek-chat' },
+      { label: 'DeepSeek Reasoner 推理模型', base: 'https://api.deepseek.com', path: '/v1/chat/completions', fmt: 'openai', model: 'deepseek-reasoner' },
+    ],
+  },
+  {
+    group: 'LongCat（美团）',
+    items: [
+      { label: 'LongCat · OpenAI 协议', base: 'https://api.longcat.chat/openai', path: '/v1/chat/completions', fmt: 'openai', model: 'LongCat-2.0' },
+      { label: 'LongCat · Anthropic 协议', base: 'https://api.longcat.chat/anthropic', path: '/v1/messages', fmt: 'anthropic', model: 'LongCat-2.0' },
+    ],
+  },
+  {
+    group: 'GLM（智谱）',
+    items: [
+      { label: '智谱开放平台（国内）', base: 'https://open.bigmodel.cn/api/paas/v4', path: '/chat/completions', fmt: 'openai', model: 'glm-4.7' },
+      { label: '智谱免费 glm-4.7-flash', base: 'https://open.bigmodel.cn/api/paas/v4', path: '/chat/completions', fmt: 'openai', model: 'glm-4.7-flash' },
+      { label: 'Z.AI 国际站', base: 'https://api.z.ai/v1', path: '/chat/completions', fmt: 'openai', model: 'GLM-4.7' },
+    ],
+  },
+  {
+    group: 'Qwen（阿里通义）',
+    items: [
+      { label: '百炼 · OpenAI 兼容（国内）', base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', path: '/chat/completions', fmt: 'openai', model: 'qwen-max' },
+      { label: '百炼 · 国际站', base: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', path: '/chat/completions', fmt: 'openai', model: 'qwen-max' },
+    ],
+  },
+  {
+    group: 'Claude（Anthropic）',
+    items: [
+      { label: 'Anthropic 官方', base: 'https://api.anthropic.com', path: '/v1/messages', fmt: 'anthropic', model: 'claude-sonnet-4-5-20250929' },
+    ],
+  },
+  {
+    group: 'Gemini（Google）',
+    items: [
+      { label: 'Google AI Studio · OpenAI 兼容', base: 'https://generativelanguage.googleapis.com/v1beta/openai/', path: '/chat/completions', fmt: 'openai', model: 'gemini-3.8-flash' },
+    ],
+  },
+  {
+    group: 'OpenAI',
+    items: [
+      { label: 'OpenAI 官方', base: 'https://api.openai.com/v1', path: '/chat/completions', fmt: 'openai', model: 'gpt-4o-mini' },
+    ],
+  },
+  {
+    group: 'Kimi（月之暗面）',
+    items: [
+      { label: 'Moonshot 官方', base: 'https://api.moonshot.cn/v1', path: '/chat/completions', fmt: 'openai', model: 'kimi-k2.5' },
+    ],
+  },
+  {
+    group: '豆包（火山引擎）',
+    items: [
+      { label: '火山方舟 Ark', base: 'https://ark.cn-beijing.volces.com/api/v3', path: '/chat/completions', fmt: 'openai', model: 'doubao-seed-1-6' },
+    ],
+  },
+  {
+    group: '硅基流动 SiliconFlow',
+    items: [
+      { label: '硅基流动官方', base: 'https://api.siliconflow.cn/v1', path: '/chat/completions', fmt: 'openai', model: 'Qwen/Qwen2.5-7B-Instruct' },
+    ],
+  },
+  {
+    group: '百度千帆',
+    items: [
+      { label: '千帆 v2', base: 'https://qianfan.baidubce.com/v2', path: '/chat/completions', fmt: 'openai', model: 'ernie-4.0-turbo-8k' },
+    ],
+  },
+  {
+    group: '腾讯混元',
+    items: [
+      { label: '混元官方', base: 'https://hunyuan.cloud.tencent.com/v1', path: '/chat/completions', fmt: 'openai', model: 'hunyuan-turbos-latest' },
+    ],
+  },
+  {
+    group: '海外聚合',
+    items: [
+      { label: 'Groq', base: 'https://api.groq.com/openai/v1', path: '/chat/completions', fmt: 'openai', model: 'llama-3.3-70b-versatile' },
+      { label: 'OpenRouter', base: 'https://openrouter.ai/api/v1', path: '/chat/completions', fmt: 'openai', model: 'openrouter/auto' },
+      { label: 'Together AI', base: 'https://api.together.xyz/v1', path: '/chat/completions', fmt: 'openai', model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' },
+      { label: 'Mistral', base: 'https://api.mistral.ai/v1', path: '/chat/completions', fmt: 'openai', model: 'mistral-large-latest' },
+    ],
+  },
+  {
+    group: '本地部署',
+    items: [
+      { label: 'vLLM', base: 'http://127.0.0.1:8000/v1', path: '/chat/completions', fmt: 'openai', model: '' },
+      { label: 'Ollama', base: 'http://127.0.0.1:11434/v1', path: '/chat/completions', fmt: 'openai', model: '' },
+      { label: 'LM Studio', base: 'http://127.0.0.1:1234/v1', path: '/chat/completions', fmt: 'openai', model: '' },
+      { label: 'Xinference', base: 'http://127.0.0.1:9997/v1', path: '/chat/completions', fmt: 'openai', model: '' },
+      { label: 'llama.cpp server', base: 'http://127.0.0.1:8080/v1', path: '/chat/completions', fmt: 'openai', model: '' },
+    ],
+  },
+];
+
+/** 展平成 [ {idx, ...item} ]，供下拉与匹配用 */
+const PROVIDER_LIST = [];
+PROVIDERS.forEach((g) => {
+  g.items.forEach((it) => PROVIDER_LIST.push(Object.assign({ group: g.group }, it)));
+});
+
+/** base+path 精确匹配到预设下标，用于恢复配置后同步下拉 */
+function matchProvider(base, path, fmt) {
+  if (!base) return -1;
+  const nb = base.replace(/\/+$/, '');
+  const np = (path || '').split('?')[0].replace(/\/+$/, '');
+  for (let i = 0; i < PROVIDER_LIST.length; i++) {
+    const it = PROVIDER_LIST[i];
+    const same = it.base.replace(/\/+$/, '') === nb &&
+      (it.path.split('?')[0].replace(/\/+$/, '') === np) &&
+      (it.fmt === (fmt || 'openai'));
+    if (same) return i;
+  }
+  return -1;
+}
+
 function setField(name, value) {
   if (CHECKS[name]) {
     $(CHECKS[name]).checked = !!value;
@@ -90,6 +227,128 @@ function fillForm(cfg) {
   }
   // 协议切换时自动改默认路径
   syncPathByFormat();
+  // 已有配置 → 尝试匹配到服务商下拉
+  syncProviderSelect();
+}
+
+/* ------------------------------------------------------------------
+ * 服务商下拉
+ * ------------------------------------------------------------------ */
+function fillProviderSelect() {
+  const sel = $('provider');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const custom = document.createElement('option');
+  custom.value = '-1';
+  custom.textContent = '自定义 / 手动填写';
+  sel.appendChild(custom);
+
+  let offset = 0;   // 与 PROVIDER_LIST 的下标严格对齐，「自定义」单独用 -1
+  PROVIDERS.forEach((g) => {
+    const og = document.createElement('optgroup');
+    og.label = g.group;
+    g.items.forEach((it) => {
+      const o = document.createElement('option');
+      o.value = String(offset);
+      o.textContent = it.label;
+      og.appendChild(o);
+      offset++;
+    });
+    sel.appendChild(og);
+  });
+}
+
+/** 把预设填进表单。idx 来自下拉，-1 表示自定义（不动表单） */
+function applyProvider(idx) {
+  if (idx < 0 || idx >= PROVIDER_LIST.length) {
+    const hint = $('providerHint');
+    if (hint) hint.textContent = '自定义模式：Base URL 与路径自己填';
+    return;
+  }
+  const it = PROVIDER_LIST[idx];
+  $('baseUrl').value = it.base;
+  $('path').value = it.path;
+  $('apiFormat').value = it.fmt;
+  // 模型处理：
+  //   - 预设有默认模型 → 覆盖（当前值为空，或仍是某个预设的默认值）
+  //   - 预设无默认模型（本地部署）→ 若当前值是某个预设的默认值就清空，
+  //     否则保留（用户可能刚从别处粘了真实模型名）
+  const mEl = $('model');
+  const cur = mEl.value.trim();
+  const isPresetModel = cur === '' || PROVIDER_LIST.some((p) => p.model && p.model === cur);
+  if (it.model) {
+    if (isPresetModel) mEl.value = it.model;
+  } else if (cur !== '' && PROVIDER_LIST.some((p) => p.model && p.model === cur)) {
+    mEl.value = '';
+  }
+  syncProviderHint();
+  log(`已选择服务商预设：${it.group} · ${it.label}`);
+}
+
+/** 把表单当前值反查到下拉（配置加载后用） */
+function syncProviderSelect() {
+  const sel = $('provider');
+  if (!sel) return;
+  const idx = matchProvider($('baseUrl').value.trim(), $('path').value.trim(), $('apiFormat').value);
+  sel.value = String(idx);
+  syncProviderHint();
+}
+
+function syncProviderHint() {
+  const hint = $('providerHint');
+  if (!hint) return;
+  const idx = parseInt($('provider').value, 10);
+  if (idx < 0 || idx >= PROVIDER_LIST.length) {
+    hint.textContent = '自定义模式：Base URL 与路径自己填';
+    return;
+  }
+  const it = PROVIDER_LIST[idx];
+  const full = it.base.replace(/\/+$/, '') + it.path;
+  hint.innerHTML = `请求地址：<code>${escapeHtml(full)}</code>`;
+}
+
+/* ------------------------------------------------------------------
+ * 拉取模型列表
+ * ------------------------------------------------------------------ */
+async function fetchModels() {
+  const cfg = readForm();
+  if (!cfg.base_url) {
+    setStatus('请先填写 Base URL', 'err');
+    return;
+  }
+  const btn = $('fetchModelsBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '拉取中…'; }
+  setStatus('正在从上游拉取模型列表…', 'run');
+  try {
+    const r = await fetch(API + '/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: cfg.base_url, api_key: cfg.api_key, api_format: cfg.api_format, path: cfg.path }),
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || '未知错误');
+    const dl = $('modelList');
+    if (dl) {
+      dl.innerHTML = '';
+      // 上游返回可能成百上千条，只塞进 datalist 不阻塞 UI
+      for (const id of j.models) {
+        const o = document.createElement('option');
+        o.value = id;
+        dl.appendChild(o);
+      }
+    }
+    setStatus(`拉到 ${j.models.length} 个模型（接口 ${j.path}），点模型输入框下拉选择`);
+    log(`模型列表：${j.models.slice(0, 8).join(', ')}${j.models.length > 8 ? ' …' : ''}`);
+    // 首个模型直接填进去，用户通常就想要它
+    if (j.models.length && !$('model').value.trim()) {
+      $('model').value = j.models[0];
+    }
+  } catch (e) {
+    setStatus('拉取模型失败：' + e.message, 'err');
+    log('拉取模型失败：' + e.message, '#ef4444');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '拉取模型列表'; }
+  }
 }
 
 function syncPathByFormat() {
@@ -472,17 +731,18 @@ function drawTpsChart(data) {
     ctx.fillRect(px - bw / 2, box.y + box.h - ph, bw, ph);
   });
 
-  ctx.fillStyle = cssVar('--muted');
   ctx.font = '10px -apple-system, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'bottom';
-  // 放在绘图区下方，避开曲线与柱子（画在区内会压住右上角的数据）
   const peakTxt = '瞬时峰值 ' + fmt(maxInst, 1) + ' tok/s';
   const tw = ctx.measureText(peakTxt).width;
+  // 放左上角：累计曲线从左下升到右上，左上恒为空白；加背景避免压住网格线
+  const pxx = box.x + 3;
+  const pyy = box.y + 11;
   ctx.fillStyle = hexA(cssVar('--card'), .9);
-  ctx.fillRect(box.x + box.w - tw - 4, box.y + box.h - 16, tw + 6, 14);
+  ctx.fillRect(pxx - 2, pyy - 10, tw + 5, 13);
   ctx.fillStyle = cssVar('--muted');
-  ctx.fillText(peakTxt, box.x + box.w - 2, box.y + box.h - 4);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(peakTxt, pxx, pyy);
 }
 
 function drawTtftChart(data) {
@@ -768,7 +1028,18 @@ function bind() {
   $('probeModal').addEventListener('click', (e) => {
     if (e.target === $('probeModal')) $('probeModal').hidden = true;
   });
-  $('apiFormat').addEventListener('change', syncPathByFormat);
+  $('apiFormat').addEventListener('change', () => {
+    syncPathByFormat();
+    // 协议一变，预设基本就对不上了
+    $('provider').value = '-1';
+    syncProviderHint();
+  });
+  $('provider').addEventListener('change', (e) => applyProvider(parseInt(e.target.value, 10)));
+  $('fetchModelsBtn').addEventListener('click', fetchModels);
+  // 手动改 base/path/format 时，下拉自动跳到自定义，避免显示的预设与实际不符
+  ['baseUrl', 'path'].forEach((id) => {
+    $(id).addEventListener('change', syncProviderSelect);
+  });
   $('toggleKey').addEventListener('click', () => {
     const el = $('apiKey');
     el.type = el.type === 'password' ? 'text' : 'password';
@@ -788,6 +1059,7 @@ function bind() {
 /* ---------------- 启动 ---------------- */
 (function init() {
   if (localStorage.getItem('tt-theme') === 'dark') document.body.classList.add('dark');
+  fillProviderSelect();   // 先填下拉，loadConfig 里要反查匹配
   bind();
   resetKpi();
   loadConfig();

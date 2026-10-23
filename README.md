@@ -10,6 +10,8 @@
 
 - **六项核心指标**：聚合吞吐、并发解码吞吐、TTFT、TPOT、输出 token、成功率
 - **四张图表**：吞吐曲线（累计 token + 瞬时 tok/s）、TTFT 分布、ITL 分位曲线（p10/p50/p90）、TTFT/TPOT 分位对比
+- **31 个服务商预设**：小米 MiMo / DeepSeek / LongCat / GLM / Qwen / Claude / Gemini / OpenAI / Kimi / 豆包 / 硅基流动 / 千帆 / 混元 / Groq 等，选完自动填好接入点，不用记路径
+- **一键拉取模型列表**：后端代理调上游 `/models`，模型名也不用记
 - **Token 口径透明**：每条请求都标明 token 是上游 `usage` 精确值还是本地估算；空 chunk 一律过滤，空帧不会污染 TTFT
 - **并发梯度压测**：调并发数看吞吐何时饱和、TTFT 何时开始劣化
 - **双协议**：OpenAI 兼容（vLLM / Ollama / LM Studio / 硅基流动 / DeepSeek…）+ Anthropic Messages
@@ -154,22 +156,62 @@ SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计
 
 `chunks` 字段是**有效 chunk 数**（过滤后），ITL 长度 = chunks − 1。
 
+## 服务商预设
+
+页面顶部的「服务商」下拉内置 **15 组 31 个接入点**，选完自动填好 Base URL、接口路径、协议和默认模型——不用记任何路径。
+
+| 分组 | 预设 | Base URL | 接口路径 | 协议 |
+|---|---|---|---|---|
+| 小米 | MiMo 按量付费 | `https://api.xiaomimimo.com/v1` | `/chat/completions` | OpenAI |
+| 小米 | MiMo 按量付费 | `https://api.xiaomimimo.com/anthropic` | `/v1/messages` | Anthropic |
+| 小米 | MiMo Token Plan | `https://token-plan-cn.xiaomimimo.com/v1` | `/chat/completions` | OpenAI |
+| 小米 | MiMo Token Plan | `https://token-plan-cn.xiaomimimo.com/anthropic` | `/v1/messages` | Anthropic |
+| DeepSeek | 官方 | `https://api.deepseek.com` | `/v1/chat/completions` | OpenAI |
+| DeepSeek | Reasoner | `https://api.deepseek.com` | `/v1/chat/completions` | OpenAI |
+| LongCat | 美团官方 | `https://api.longcat.chat/openai` | `/v1/chat/completions` | OpenAI |
+| LongCat | 美团官方 | `https://api.longcat.chat/anthropic` | `/v1/messages` | Anthropic |
+| GLM | 智谱开放平台 | `https://open.bigmodel.cn/api/paas/v4` | `/chat/completions` | OpenAI |
+| GLM | Z.AI 国际站 | `https://api.z.ai/v1` | `/chat/completions` | OpenAI |
+| Qwen | 百炼国内 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `/chat/completions` | OpenAI |
+| Qwen | 百炼国际 | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `/chat/completions` | OpenAI |
+| Claude | Anthropic 官方 | `https://api.anthropic.com` | `/v1/messages` | Anthropic |
+| Gemini | Google AI Studio | `https://generativelanguage.googleapis.com/v1beta/openai/` | `/chat/completions` | OpenAI |
+| OpenAI | 官方 | `https://api.openai.com/v1` | `/chat/completions` | OpenAI |
+| Kimi | 月之暗面 | `https://api.moonshot.cn/v1` | `/chat/completions` | OpenAI |
+| 豆包 | 火山方舟 | `https://ark.cn-beijing.volces.com/api/v3` | `/chat/completions` | OpenAI |
+| 硅基流动 | 官方 | `https://api.siliconflow.cn/v1` | `/chat/completions` | OpenAI |
+| 百度千帆 | v2 | `https://qianfan.baidubce.com/v2` | `/chat/completions` | OpenAI |
+| 腾讯混元 | 官方 | `https://hunyuan.cloud.tencent.com/v1` | `/chat/completions` | OpenAI |
+| 海外聚合 | Groq / OpenRouter / Together / Mistral | 各自地址 | `/chat/completions` | OpenAI |
+| 本地部署 | vLLM / Ollama / LM Studio / Xinference / llama.cpp | `127.0.0.1:8000/11434/1234/9997/8080` | `/chat/completions` | OpenAI |
+
+几点说明：
+
+- **小米 / LongCat 是双协议**，同一个服务商给 OpenAI 和 Anthropic 两个接入点，选哪个就走哪种解析
+- **小米是唯一有「按量付费」和「Token Plan 订阅」两套地址的服务商**——Token Plan 用 `token-plan-cn.xiaomimimo.com`，Key 前缀是 `tp-`（团队版 `ttp-`），与按量付费的 `sk-` 不通用
+- **本地部署的预设不填默认模型名**，因为模型由你本地起了什么决定——选完直接点「拉取模型列表」
+- 手动改 Base URL 或路径后，下拉自动跳到「自定义 / 手动填写」，避免显示的预设与实际配置对不上
+
+## 拉取模型列表
+
+模型名同样不用记。填好接入点后点「**拉取模型列表**」，后端代理调一次上游 `/models`，把返回的模型 ID 塞进模型输入框的联想下拉。
+
+模型路径由你填的接口路径自动推导：
+
+```
+/v1/chat/completions          →  /v1/models
+/openai/v1/chat/completions   →  /openai/v1/models
+/chat/completions             →  /models
+/v1/messages                  →  /v1/models
+```
+
+三种返回结构都能解析：`{"data":[{"id":...}]}`、`{"data":[{"model_name":...}]}`、`{"models":[...]}`。
+
+本地 vLLM / Ollama 走这条路最省事——`http://127.0.0.1:11434/v1` 拉一下就知道当前装了哪些模型。
+
 ## 协议支持
 
-**OpenAI 兼容**（`/v1/chat/completions` 等）——主流网关都吃这套：
-
-```bash
-# vLLM
-http://127.0.0.1:8000
-# Ollama
-http://127.0.0.1:11434
-# LM Studio
-http://127.0.0.1:1234
-# 硅基流动
-https://api.siliconflow.cn
-# DeepSeek
-https://api.deepseek.com
-```
+**OpenAI 兼容**（`/v1/chat/completions` 等）——上面预设表里除 Claude 外全部走这套。
 
 **Anthropic Messages**（`/v1/messages`）——协议下拉切换，路径自动改成 `/v1/messages`。
 
@@ -247,6 +289,7 @@ https://api.deepseek.com
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/config` | 读当前配置 |
 | POST | `/api/config` | 写配置（原子替换） |
+| POST | `/api/models` | 代理拉取上游 `/models`，路径由接口路径自动推导 |
 | POST | `/api/probe` | 单次流式探测，SSE 返回 |
 | POST | `/api/bench` | 并发压测，SSE 返回 |
 

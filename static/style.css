@@ -230,6 +230,7 @@ code {
 }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
 .btn-ghost { background: transparent; }
+.btn-block { width: 100%; margin-bottom: 11px; }
 #toggleKey { background: none; border: none; }
 
 .status-line {

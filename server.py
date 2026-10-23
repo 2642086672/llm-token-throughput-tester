@@ -318,6 +318,44 @@ def _parse_delta(obj: dict):
     return delta, usage
 
 
+def _models_path_from_chat(chat_path: str, api_format) -> str:
+    """从 chat completions 路径推导 /models 路径。
+
+    用户填的是业务接口路径（如 /v1/chat/completions），模型列表接口在同级目录。
+    """
+    p = (chat_path or "").split("?")[0]
+    base = p
+    # 剥掉末尾的资源段
+    for suffix in ("/chat/completions", "/completions", "/messages"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    if not base or base == "/":
+        return "/models"
+    return base.rstrip("/") + "/models"
+
+
+def _extract_model_ids(obj) -> list:
+    """兼容三种返回结构：{data:[{id}]} / {data:[{model_name}]} / {models:[...]}"""
+    if not isinstance(obj, dict):
+        return []
+    items = obj.get("data") or obj.get("models") or obj.get("model_list") or []
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if isinstance(it, str):
+            out.append(it)
+        elif isinstance(it, dict):
+            # 不同厂商字段名不同
+            for k in ("id", "name", "model_name", "model"):
+                v = it.get(k)
+                if isinstance(v, str) and v:
+                    out.append(v)
+                    break
+    return out
+
+
 def build_request(cfg: dict, prompt: str):
     fmt = (cfg.get("api_format") or "openai").lower()
     headers = {
@@ -818,6 +856,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "config": save_config(merged)})
             return
 
+        if path == "/api/models":
+            self._do_models(cfg_in)
+            return
+
         if path == "/api/probe":
             self._do_probe(cfg_in)
             return
@@ -827,6 +869,49 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_json({"ok": False, "error": "unknown endpoint"}, 404)
+
+    # -- 拉取上游模型列表 ------------------------------------------------
+    def _do_models(self, cfg_in: dict):
+        """代理 GET {base}/models。浏览器直接调会被 CORS 拦，走后端。
+
+        模型列表路径由 chat completions 路径推导：
+            /v1/chat/completions          -> /v1/models
+            /openai/v1/chat/completions   -> /openai/v1/models
+            /chat/completions             -> /models
+            /v1/messages                  -> /v1/models
+        """
+        cfg = load_config()
+        cfg.update({k: v for k, v in cfg_in.items() if k in DEFAULT_CONFIG})
+        try:
+            up = Upstream(cfg)
+            models_path = _models_path_from_chat(cfg.get("path") or "", cfg.get("api_format"))
+            headers = {"Accept": "application/json", "User-Agent": "throughput-tester/1.0"}
+            key = cfg.get("api_key") or ""
+            if (cfg.get("api_format") or "openai").lower() == "anthropic":
+                if key:
+                    headers["x-api-key"] = key
+                headers["anthropic-version"] = cfg.get("anthropic_version") or "2023-06-01"
+            else:
+                if key:
+                    headers["Authorization"] = "Bearer " + key
+            up.connect().request("GET", up.base_path + models_path, headers=headers)
+            resp = up.conn.getresponse()
+            raw = resp.read(2 * 1024 * 1024).decode("utf-8", "replace")
+            up.close()
+            if resp.status != 200:
+                self._send_json({
+                    "ok": False,
+                    "error": f"HTTP {resp.status} {resp.reason}: {raw[:300]}",
+                }, 200)
+                return
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = {}
+            ids = _extract_model_ids(obj)
+            self._send_json({"ok": True, "models": ids, "path": models_path})
+        except Exception as e:
+            self._send_json({"ok": False, "error": f"{type(e).__name__}: {e}"}, 200)
 
     # -- 单次流式探测 ---------------------------------------------------
     def _do_probe(self, cfg_in: dict):
