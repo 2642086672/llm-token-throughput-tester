@@ -60,7 +60,9 @@ llm-token-throughput-tester/
 │   ├── style.css          样式（含深色主题）
 │   └── app.js             前端逻辑：表单绑定、SSE 消费、Canvas 图表
 ├── mock/
-│   └── mock_server.py     模拟 OpenAI 兼容流式接口，本地自测用
+│   ├── mock_server.py      模拟 OpenAI 兼容流式接口，本地自测用
+│   ├── mock_edge_cases.py  发「脏 chunk」（空串/null/空对象/空格），验证过滤逻辑
+│   └── mock_no_usage.py    只发内容不发 usage，验证本地估算路径
 ├── e2e_test.js            Playwright 端到端验收脚本（开发用，非运行必需）
 └── README.md
 ```
@@ -117,6 +119,39 @@ python server.py --host 127.0.0.1 --port 8770
 
 - 关（默认）：每次新建连接，TTFT 含握手，贴近真实用户的首次调用体验
 - 开：连接常驻，TTFT 只反映服务端排队 + 首字计算，反映服务本身的处理能力
+
+## Token 计数口径
+
+工具只有两种口径，每条请求明细都带 `token_source` 字段标明用了哪种：
+
+| 口径 | 条件 | 来源 |
+|---|---|---|
+| `usage` | 勾了「请求 usage」**且**上游返回了 usage | 上游 `completion_tokens`，精确值 |
+| `estimated` | 其余情况 | 本地计算（见下） |
+
+本地估算优先级：装了 `tiktoken` 就用 `cl100k_base` 精确编码；没装则用启发式（CJK 1 字 ≈ 1 token，其余 4 字符 ≈ 1 token）。
+
+**注意**：勾选「请求 usage」只影响"要不要向上游索要"这个动作。若上游忽略该参数返回了 usage，工具**仍会采信**上游值——因为上游给的数就是准的。反过来，取消勾选后工具会**改用本地估算**，即使上游仍返回了 usage 也不采信，这样口径与你的设置始终一致。
+
+### 空 chunk 的处理
+
+SSE 流里常见的空帧会被过滤，**不计入 token、不参与 ITL 统计、不影响 TTFT**：
+
+| 上游发的帧 | 处理 |
+|---|---|
+| `{"delta":{"role":"assistant","content":""}}` | 丢弃（content 为空串） |
+| `{"delta":{"content":null}}` | 丢弃（content 为 null） |
+| `{"delta":{}}` | 丢弃（无 content 字段） |
+| `{"choices":[],"usage":{...}}` | 只取 usage，不算 chunk |
+| `data: [DONE]` | 结束标记 |
+| `: ping` 注释行 | 丢弃 |
+| `{"delta":{"content":" "}}` | **保留**（空格是真实字符，算 1 token） |
+
+关键点：**空帧不会提前触发 TTFT**。TTFT 只在收到第一个非空 content 时打点，所以「先发 role 再发内容」这种两段式响应，测出来的 TTFT 是内容真正开始的时间，不是 role 帧的时间。
+
+**空格帧保留是有意为之**——它是一枚真实的 token，把它算进去才能让 ITL 序列与上游实际吐字节奏对齐。如果全滤掉，ITL 会出现虚假的间隔跳变。
+
+`chunks` 字段是**有效 chunk 数**（过滤后），ITL 长度 = chunks − 1。
 
 ## 协议支持
 

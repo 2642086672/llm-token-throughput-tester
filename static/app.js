@@ -186,7 +186,7 @@ async function runBench() {
   $('stopBtn').disabled = false;
   $('probeBtn').disabled = true;
   setStatus('压测运行中…', 'run');
-  $('resultBody').innerHTML = '<tr class="empty"><td colspan="11">等待结果…</td></tr>';
+  $('resultBody').innerHTML = '<tr class="empty"><td colspan="12">等待结果…</td></tr>';
   $('tableCount').textContent = '0 条';
   resetKpi();
   drawAll(null);
@@ -272,7 +272,7 @@ function renderResult(data) {
   setKpi('kpiTpot', fmt(s.avg_tpot_ms, 2));
   $('kpiTpotSub').textContent = `p50 ${fmt(s.p50_tpot_ms, 2)} / p95 ${fmt(s.p95_tpot_ms, 2)}`;
   setKpi('kpiTokens', s.total_output_tokens);
-  $('kpiTokensSub').textContent = `usage ${s.tokens_from_usage} · 估算 ${s.tokens_from_estimate}`;
+  $('kpiTokensSub').textContent = `上游 usage 精确 ${s.tokens_from_usage} 条 · 本地估算 ${s.tokens_from_estimate} 条`;
   setKpi('kpiOk', fmt(s.success_rate, 1));
   $('kpiOkSub').textContent = `${s.ok} / ${s.requests} 成功`;
 
@@ -288,7 +288,7 @@ function renderTable(records) {
   const body = $('resultBody');
   body.innerHTML = '';
   if (!records.length) {
-    body.innerHTML = '<tr class="empty"><td colspan="11">还没有数据，点「开始压测」</td></tr>';
+    body.innerHTML = '<tr class="empty"><td colspan="12">还没有数据，点「开始压测」</td></tr>';
     return;
   }
   for (const r of records) appendRow(r);
@@ -306,6 +306,10 @@ function appendRow(r) {
   const empty = body.querySelector('.empty');
   if (empty) empty.remove();
   const tr = document.createElement('tr');
+  const srcLabel = r.token_source === 'usage' ? 'usage' : '估算';
+  const srcTitle = r.token_source === 'usage'
+    ? '上游 usage 精确计数'
+    : '本地估算（tiktoken 或启发式）';
   const cells = [
     r.seq,
     r.ok ? '<span class="badge ok">OK</span>' : '<span class="badge err">FAIL</span>',
@@ -313,6 +317,7 @@ function appendRow(r) {
     fmt(r.total_ms, 1),
     fmt(r.gen_ms, 1),
     r.output_tokens,
+    `<span class="src-tag src-${r.token_source === 'usage' ? 'u' : 'e'}" title="${srcTitle}">${srcLabel}</span>`,
     fmt(r.decode_tps, 2),
     fmt(r.e2e_tps, 2),
     fmt(r.tpot_ms, 2),
@@ -321,7 +326,7 @@ function appendRow(r) {
   ];
   cells.forEach((c, i) => {
     const td = document.createElement('td');
-    if (i === 0 || i === 1 || i === 10) td.innerHTML = c;
+    if (i === 0 || i === 1 || i === 6 || i === 11) td.innerHTML = c;
     else td.textContent = c;
     tr.appendChild(td);
   });
@@ -369,7 +374,7 @@ function drawFrame(ctx, box, xLabel, yLabel, yTicks) {
   ctx.beginPath();
   ctx.moveTo(x + 0.5, y);
   ctx.lineTo(x + 0.5, y + h + 0.5);
-  ctx.lineTo(x + w, y + 0.5);
+  ctx.lineTo(x + w, y + h + 0.5);
   ctx.stroke();
 
   if (xLabel) {
@@ -391,14 +396,17 @@ function drawFrame(ctx, box, xLabel, yLabel, yTicks) {
 
 function niceTicks(max, count) {
   if (!isFinite(max) || max <= 0) max = 1;
-  // 固定 count+1 个刻度（含 0 和最大值），用等分步长而不是 1/2/5 阶梯，
-  // 否则小数值区间会挤出一堆刻度导致标签重叠
-  const step = max / count;
+  // 取整步长（1/2/2.5/5 × 10^n），保证刻度值是好读的整数
+  const raw = max / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const top = Math.ceil(max / step) * step;   // 轴顶取整到 step 的倍数
   const ticks = [];
-  for (let i = 0; i <= count; i++) {
-    const v = step * i;
-    ticks.push({ pos: i / count, label: fmtAxis(v) });
+  for (let v = 0; v <= top + 1e-9; v += step) {
+    ticks.push({ pos: v / top, label: fmtAxis(v) });
   }
+  ticks.axisTop = top;   // 数据归一化必须用同一个基准，否则会画到轴外
   return ticks;
 }
 
@@ -425,7 +433,9 @@ function drawTpsChart(data) {
   const maxInst = Math.max(...pts.map((p) => p.inst_tps), 1);
   const t0 = pts[0].t_ms, t1 = pts[pts.length - 1].t_ms || 1;
 
-  drawFrame(ctx, box, '时间(ms)', '累计 token', niceTicks(maxCum, 4));
+  const cumTicks = niceTicks(maxCum, 4);
+  const cumTop = cumTicks.axisTop;      // 归一化基准 = 轴顶
+  drawFrame(ctx, box, '时间(ms)', '累计 token', cumTicks);
 
   // 累计 token 面积
   const grad = ctx.createLinearGradient(0, box.y, 0, box.y + box.h);
@@ -434,7 +444,7 @@ function drawTpsChart(data) {
   ctx.beginPath();
   pts.forEach((p, i) => {
     const px = box.x + ((p.t_ms - t0) / (t1 - t0 || 1)) * box.w;
-    const py = box.y + box.h - (p.cum_tokens / maxCum) * box.h;
+    const py = box.y + box.h - (p.cum_tokens / cumTop) * box.h;
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   });
   ctx.lineTo(box.x + box.w, box.y + box.h);
@@ -446,14 +456,14 @@ function drawTpsChart(data) {
   ctx.beginPath();
   pts.forEach((p, i) => {
     const px = box.x + ((p.t_ms - t0) / (t1 - t0 || 1)) * box.w;
-    const py = box.y + box.h - (p.cum_tokens / maxCum) * box.h;
+    const py = box.y + box.h - (p.cum_tokens / cumTop) * box.h;
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   });
   ctx.strokeStyle = cssVar('--a');
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // 瞬时 tok/s（右轴，橙色柱）
+  // 瞬时 tok/s（橙色柱，右轴语义，高度按自身峰值归一化，限制在 0.55 框高内）
   const bw = Math.max(1, box.w / pts.length - 1);
   ctx.fillStyle = hexA(cssVar('--b'), .55);
   pts.forEach((p) => {
@@ -465,9 +475,14 @@ function drawTpsChart(data) {
   ctx.fillStyle = cssVar('--muted');
   ctx.font = '10px -apple-system, sans-serif';
   ctx.textAlign = 'right';
-  ctx.textBaseline = 'top';
-  // 放在右上角，避开左侧 Y 轴刻度
-  ctx.fillText('瞬时峰值 ' + fmt(maxInst, 1) + ' tok/s', box.x + box.w, box.y + 1);
+  ctx.textBaseline = 'bottom';
+  // 放在绘图区下方，避开曲线与柱子（画在区内会压住右上角的数据）
+  const peakTxt = '瞬时峰值 ' + fmt(maxInst, 1) + ' tok/s';
+  const tw = ctx.measureText(peakTxt).width;
+  ctx.fillStyle = hexA(cssVar('--card'), .9);
+  ctx.fillRect(box.x + box.w - tw - 4, box.y + box.h - 16, tw + 6, 14);
+  ctx.fillStyle = cssVar('--muted');
+  ctx.fillText(peakTxt, box.x + box.w - 2, box.y + box.h - 4);
 }
 
 function drawTtftChart(data) {
@@ -483,21 +498,23 @@ function drawTtftChart(data) {
   // 离群判定用中位数的倍数，而不是"接近最大值"。
   // 否则一批 TTFT 几乎相同的请求会全部被判成离群，整屏变橙色。
   const outlierLine = Math.max(med * 1.5, 1);
-  drawFrame(ctx, box, '请求序号', 'TTFT (ms)', niceTicks(maxV, 4));
+  const ttftTicks = niceTicks(maxV, 4);
+  const ttftTop = ttftTicks.axisTop;
+  drawFrame(ctx, box, '请求序号', 'TTFT (ms)', ttftTicks);
 
   const n = vals.length;
   const bw = Math.max(2, Math.min(26, box.w / n - 2));
   vals.forEach((v, i) => {
     const px = box.x + (i / Math.max(1, n - 1)) * (box.w - bw) + bw / 2;
-    const ph = (v / maxV) * box.h;
+    const ph = (v / ttftTop) * box.h;
     const hot = v > outlierLine;
     ctx.fillStyle = hot ? hexA(cssVar('--b'), .85) : hexA(cssVar('--c'), .8);
     ctx.fillRect(px - bw / 2, box.y + box.h - ph, bw, ph);
   });
 
   // 离群阈值虚线
-  if (outlierLine < maxV) {
-    const ly = box.y + box.h - (outlierLine / maxV) * box.h;
+  if (outlierLine < ttftTop) {
+    const ly = box.y + box.h - (outlierLine / ttftTop) * box.h;
     ctx.save();
     ctx.setLineDash([4, 3]);
     ctx.strokeStyle = hexA(cssVar('--b'), .6);
@@ -541,14 +558,16 @@ function drawItlChart(data) {
 
   const all = p10.concat(p90).filter((v) => v != null);
   const maxV = Math.max(...all, 1);
-  drawFrame(ctx, box, 'token 序号', 'ITL (ms)', niceTicks(maxV, 4));
+  const itlTicks = niceTicks(maxV, 4);
+  const itlTop = itlTicks.axisTop;
+  drawFrame(ctx, box, 'token 序号', 'ITL (ms)', itlTicks);
 
   const band = (arr, color) => {
     ctx.beginPath();
     arr.forEach((v, i) => {
       if (v == null) return;
       const px = box.x + (i / Math.max(1, n - 1)) * box.w;
-      const py = box.y + box.h - (v / maxV) * box.h;
+      const py = box.y + box.h - (v / itlTop) * box.h;
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     });
     ctx.strokeStyle = color;
@@ -571,14 +590,16 @@ function drawPctChart(data) {
   const ttft = [s.p50_ttft_ms, s.p90_ttft_ms, s.p95_ttft_ms, s.p99_ttft_ms];
   const tpot = [s.p50_tpot_ms, s.p90_tpot_ms, s.p95_tpot_ms, s.p99_tpot_ms];
   const maxV = Math.max(...ttft.filter((v) => v != null), ...tpot.filter((v) => v != null), 1);
-  drawFrame(ctx, box, '分位', '毫秒', niceTicks(maxV, 4));
+  const pctTicks = niceTicks(maxV, 4);
+  const pctTop = pctTicks.axisTop;
+  drawFrame(ctx, box, '分位', '毫秒', pctTicks);
 
   const groupW = box.w / labels.length;
   const bw = groupW * 0.26;
   labels.forEach((lb, i) => {
     const cx = box.x + groupW * i + groupW / 2;
-    const a = ttft[i] != null ? (ttft[i] / maxV) * box.h : 0;
-    const b = tpot[i] != null ? (tpot[i] / maxV) * box.h : 0;
+    const a = ttft[i] != null ? (ttft[i] / pctTop) * box.h : 0;
+    const b = tpot[i] != null ? (tpot[i] / pctTop) * box.h : 0;
     ctx.fillStyle = hexA(cssVar('--a'), .85);
     ctx.fillRect(cx - bw - 1, box.y + box.h - a, bw, a);
     ctx.fillStyle = hexA(cssVar('--b'), .85);

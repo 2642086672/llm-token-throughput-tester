@@ -413,8 +413,14 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
     if prm is None:
         prm = usage.get("input_tokens")
 
+    # token 计数口径：
+    #   1) 上游给了 usage 且我们请求了 usage → 用上游的精确值（completion_tokens）
+    #   2) 否则 → 本地估算（tiktoken 优先，没有则启发式）
+    # 只看"上游有没有返回 usage"是不够的：用户主动关掉「请求 usage」时，
+    # 期望的是估算口径，若仍采信上游返回值会与设置不符。
+    want_usage = bool(cfg.get("include_usage", True))
     est = count_tokens(text)
-    if comp:
+    if want_usage and comp:
         final_tokens = int(comp)
         rec["token_source"] = "usage"
     else:
@@ -431,7 +437,8 @@ def run_request(cfg: dict, upstream: Upstream, prompt: str, seq: int) -> dict:
     rec["total_ms"] = total * 1000
     rec["gen_ms"] = gen * 1000
     rec["output_tokens"] = final_tokens
-    rec["prompt_tokens"] = int(prm or 0)
+    # prompt token 同理：没请求 usage 就用本地估算
+    rec["prompt_tokens"] = int(prm) if (want_usage and prm) else count_tokens(cfg.get("prompt") or "")
     rec["chars"] = len(text)
     rec["chunks"] = len(res["chunks"])
     rec["decode_tps"] = (final_tokens / gen) if gen > 1e-6 else 0.0
@@ -841,9 +848,18 @@ class Handler(BaseHTTPRequestHandler):
                     raise
             up.close()
             usage = res["usage"] or {}
-            comp = usage.get("completion_tokens") or usage.get("output_tokens")
+            comp = usage.get("completion_tokens")
+            if comp is None:
+                comp = usage.get("output_tokens")
             est = count_tokens(res["text"])
-            total_tok = int(comp) if comp else est
+            # 与压测主流程同口径：请求了 usage 才采信上游值
+            want_usage = bool(cfg.get("include_usage", True))
+            if want_usage and comp:
+                total_tok = int(comp)
+                src = "usage"
+            else:
+                total_tok = est
+                src = "estimated"
             gen = max(0.0, res["total"] - res["ttft"])
             self._sse({
                 "type": "probe_result",
@@ -852,7 +868,7 @@ class Handler(BaseHTTPRequestHandler):
                 "total_ms": round(res["total"] * 1000, 1),
                 "gen_ms": round(gen * 1000, 1),
                 "output_tokens": total_tok,
-                "token_source": "usage" if comp else "estimated",
+                "token_source": src,
                 "chunks": len(res["chunks"]),
                 "decode_tps": round(total_tok / gen, 2) if gen > 1e-6 else 0,
                 "e2e_tps": round(total_tok / res["total"], 2) if res["total"] > 1e-6 else 0,

@@ -315,7 +315,7 @@ thead th {
   white-space: nowrap;
   z-index: 2;
 }
-thead th:nth-child(1), thead th:nth-child(2), thead th:last-child { text-align: left; }
+thead th:nth-child(1), thead th:nth-child(2), thead th:nth-child(7), thead th:last-child { text-align: left; }
 tbody td {
   padding: 7px 11px;
   border-bottom: 1px solid var(--border);
@@ -323,7 +323,7 @@ tbody td {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-tbody td:nth-child(1), tbody td:nth-child(2), tbody td:last-child { text-align: left; }
+tbody td:nth-child(1), tbody td:nth-child(2), tbody td:nth-child(7), tbody td:last-child { text-align: left; }
 tbody tr:hover { background: var(--accent-soft); }
 tbody tr.empty td { text-align: center; color: var(--muted); padding: 26px; }
 .badge {
@@ -335,6 +335,17 @@ tbody tr.empty td { text-align: center; color: var(--muted); padding: 26px; }
 }
 .badge.ok { background: rgba(18,183,106,.14); color: var(--ok); }
 .badge.err { background: rgba(239,68,68,.14); color: var(--err); }
+/* token 计数口径标记 */
+.src-tag {
+  display: inline-block;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+.src-u { background: rgba(47,107,255,.13); color: var(--accent); }
+.src-e { background: rgba(247,144,9,.16); color: var(--warn); }
 .err-text { color: var(--err); font-size: 11.5px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- 日志 ---------- */

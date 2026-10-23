@@ -1,16 +1,9 @@
 // 前端端到端验收：真实填表 → 点压测 → 等结果 → 断言 DOM → 截图
 const { chromium } = require('playwright-core');
-const path = require('path');
-const fs = require('fs');
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const BASE = 'http://127.0.0.1:8770';
 const OUT = 'C:/Users/Administrator/WorkBuddy/2026-10-22-17-53-10/throughput-tester';
-
-// 自带 PAC：127.0.0.1 强制直连，其余走死代理，绕开系统代理
-const PAC = path.join(OUT, 'pac.js');
-const PAC_URL = 'data:text/plain;base64,' +
-  fs.readFileSync(PAC).toString('base64');
 
 (async () => {
   const browser = await chromium.launch({
