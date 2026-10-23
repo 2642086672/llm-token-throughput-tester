@@ -501,7 +501,156 @@ function syncPathByFormat() {
   }
 }
 
-/* ---------------- 状态 ---------------- */
+/* ------------------------------------------------------------------
+ * 历史记录
+ * ------------------------------------------------------------------ */
+let viewingHistoryId = null;   // 当前正在回看的历史条目 id
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  const box = $('historyList');
+  $('historyCount').textContent = list.length + ' 条';
+  if (!list.length) {
+    box.innerHTML = '<div class="history-empty">还没有历史记录，跑一次压测就会自动存下来</div>';
+    return;
+  }
+  box.innerHTML = '';
+  // 注意：循环变量不要叫 e —— 下面的事件回调里 e 是 DOM 事件对象，
+  // 会把外层的 e 遮蔽掉，导致 e.id 变成 undefined。
+  for (const entry of list) {
+    const item = document.createElement('div');
+    item.className = 'h-item' + (entry.id === viewingHistoryId ? ' active' : '');
+    const s = entry.summary || {};
+    // 只有真的配了思考参数风格才显示"思考"标记。
+    // 不能用 entry.thinking 是否为空判断——未配置时它也是"未配置"这种非空串。
+    const thinking = entry.thinking_provider ? ' · 思考' : '';
+    item.innerHTML =
+      `<div class="h-time">${escapeHtml(entry.time || fmtTime(entry.ts))}</div>` +
+      `<div class="h-main">` +
+        `<div class="h-title">${escapeHtml(entry.model || '未知模型')}` +
+          `<span class="muted"> · 并发 ${entry.concurrency} · ${entry.requests} 请求</span></div>` +
+        `<div class="h-sub">TTFT ${fmt(s.avg_ttft_ms, 0)}ms · TPOT ${fmt(s.avg_tpot_ms, 2)}ms` +
+          ` · ${s.ok}/${s.requests} 成功${thinking}</div>` +
+      `</div>` +
+      `<div class="h-tps">${fmt(s.aggregate_tps, 2)}<span> tok/s</span></div>` +
+      `<button class="h-del" title="删除这条">✕</button>`;
+
+    item.addEventListener('click', (ev) => {
+      if (ev.target.classList.contains('h-del')) return;
+      viewHistory(entry.id);
+    });
+    item.querySelector('.h-del').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      removeHistory(entry.id);
+      if (viewingHistoryId === entry.id) viewingHistoryId = null;
+      renderHistory();
+      log('已删除一条历史记录');
+    });
+    box.appendChild(item);
+  }
+}
+
+/** 打开一条历史记录并回填所有视图 */
+function viewHistory(id) {
+  const entry = getHistory(id);
+  if (!entry) { renderHistory(); return; }
+  viewingHistoryId = id;
+  const data = entryToResult(entry);
+  lastResult = data;
+  renderResult(data);
+  renderHistory();
+  setStatus(`正在查看历史：${entry.model} · ${entry.time || fmtTime(entry.ts)}`);
+  log(`已载入历史记录：${entry.model}（聚合吞吐 ${fmt(entry.summary.aggregate_tps, 2)} tok/s）`, '#5b8cff');
+  // 滚到 KPI 区，方便直接对比
+  $('kpiGrid').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** 压测结束后自动存一条 */
+function saveCurrentToHistory(result) {
+  const cfg = result.config || {};
+  const entry = addHistory(result, {
+    time: fmtTime(Date.now()),
+    model: cfg.model,
+  });
+  if (entry) {
+    viewingHistoryId = entry.id;
+    renderHistory();
+    log(`已保存到历史记录（共 ${loadHistory().length} 条）`);
+  } else {
+    log('历史记录保存失败（浏览器存储不可用或已满）', '#f79009');
+  }
+}
+
+function clearAllHistory() {
+  if (!loadHistory().length) { renderHistory(); return; }
+  clearHistory();
+  viewingHistoryId = null;
+  renderHistory();
+  log('历史记录已清空');
+  setStatus('历史记录已清空');
+}
+
+/** 导出历史：CSV 便于横向对比，JSON 保留完整数据 */
+function exportHistory() {
+  const list = loadHistory();
+  if (!list.length) { setStatus('暂无历史记录可导出', 'err'); return; }
+
+  const head = ['time', 'model', 'base_url', 'concurrency', 'requests',
+    'aggregate_tps', 'aggregate_decode_tps', 'avg_ttft_ms', 'p50_ttft_ms',
+    'p95_ttft_ms', 'p99_ttft_ms', 'avg_tpot_ms', 'p50_tpot_ms', 'p95_tpot_ms',
+    'avg_decode_tps', 'avg_e2e_tps', 'total_output_tokens', 'total_reasoning_tokens',
+    'wall_time_ms', 'ok', 'failed', 'success_rate', 'thinking'];
+  const lines = [head.join(',')];
+  for (const e of list) {
+    const s = e.summary || {};
+    lines.push(head.map((k) => {
+      let v;
+      if (k === 'time') v = e.time || fmtTime(e.ts);
+      else if (k === 'model') v = e.model;
+      else if (k === 'base_url') v = e.base;
+      else if (k === 'concurrency') v = e.concurrency;
+      else if (k === 'requests') v = e.requests;
+      else if (k === 'thinking') v = e.thinking || '';
+      else v = s[k];
+      if (v == null) return '';
+      const str = String(v);
+      return /[",\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+    }).join(','));
+  }
+  download('throughput-history.csv', lines.join('\n'), 'text/csv;charset=utf-8');
+  log(`已导出 ${list.length} 条历史记录（CSV）`);
+  setStatus(`已导出 ${list.length} 条历史记录`);
+}
+
+/* ------------------------------------------------------------------
+ * 图表交互
+ * ------------------------------------------------------------------ */
+// 点击 TTFT 图的某根柱子 → 在明细表里定位到那条请求
+function onTtftSelect(rec) {
+  if (!rec) return;
+  const body = $('resultBody');
+  const rows = [...body.querySelectorAll('tr')];
+  for (const r of rows) {
+    const c0 = r.cells[0];
+    if (c0 && c0.textContent.trim() === String(rec.seq)) {
+      r.style.background = hexA(cssVar('--accent'), .16);
+      r.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => { r.style.background = ''; }, 1800);
+      break;
+    }
+  }
+  setStatus(`已选中请求 #${rec.seq}：TTFT ${fmt(rec.ttft_ms, 1)}ms`);
+}
+
+/* ------------------------------------------------------------------
+ * 状态
+ * ------------------------------------------------------------------ */
 let running = false;
 let abortCtl = null;
 let lastResult = null;
@@ -616,6 +765,8 @@ async function runBench() {
     const dt = ((performance.now() - t0) / 1000).toFixed(1);
     if (lastResult) {
       const s = lastResult.summary;
+      // 每次压测结束自动存一条历史
+      saveCurrentToHistory(lastResult);
       setStatus(`完成：${s.ok}/${s.requests} 成功，聚合吞吐 ${fmt(s.aggregate_tps, 2)} tok/s，耗时 ${dt}s`);
     } else {
       setStatus('结束（未收到结果）');
@@ -841,6 +992,7 @@ function drawTpsChart(data) {
   const { ctx, w, h } = setupCanvas(cv);
   const box = { x: 42, y: 14, w: w - 58, h: h - 46 };
   const pts = (data && data.timeline && data.timeline.points) || [];
+  clearHits(cv);
   if (!pts.length) { drawEmpty(ctx, box, '暂无数据'); return; }
 
   const maxCum = Math.max(...pts.map((p) => p.cum_tokens), 1);
@@ -851,14 +1003,17 @@ function drawTpsChart(data) {
   const cumTop = cumTicks.axisTop;      // 归一化基准 = 轴顶
   drawFrame(ctx, box, '时间(ms)', '累计 token', cumTicks);
 
+  const X = (t) => box.x + ((t - t0) / (t1 - t0 || 1)) * box.w;
+  const Y = (v) => box.y + box.h - (v / cumTop) * box.h;
+
   // 累计 token 面积
   const grad = ctx.createLinearGradient(0, box.y, 0, box.y + box.h);
   grad.addColorStop(0, hexA(cssVar('--a'), .28));
   grad.addColorStop(1, hexA(cssVar('--a'), .02));
   ctx.beginPath();
   pts.forEach((p, i) => {
-    const px = box.x + ((p.t_ms - t0) / (t1 - t0 || 1)) * box.w;
-    const py = box.y + box.h - (p.cum_tokens / cumTop) * box.h;
+    const px = X(p.t_ms);
+    const py = Y(p.cum_tokens);
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   });
   ctx.lineTo(box.x + box.w, box.y + box.h);
@@ -869,8 +1024,8 @@ function drawTpsChart(data) {
 
   ctx.beginPath();
   pts.forEach((p, i) => {
-    const px = box.x + ((p.t_ms - t0) / (t1 - t0 || 1)) * box.w;
-    const py = box.y + box.h - (p.cum_tokens / cumTop) * box.h;
+    const px = X(p.t_ms);
+    const py = Y(p.cum_tokens);
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   });
   ctx.strokeStyle = cssVar('--a');
@@ -881,9 +1036,49 @@ function drawTpsChart(data) {
   const bw = Math.max(1, box.w / pts.length - 1);
   ctx.fillStyle = hexA(cssVar('--b'), .55);
   pts.forEach((p) => {
-    const px = box.x + ((p.t_ms - t0) / (t1 - t0 || 1)) * box.w;
+    const px = X(p.t_ms);
     const ph = (p.inst_tps / maxInst) * box.h * 0.55;
     ctx.fillRect(px - bw / 2, box.y + box.h - ph, bw, ph);
+  });
+
+  // ---- 交互：命中区 + 悬停/选中高亮
+  const hover = getHover(cv);
+  const sel = (HIT_STATE.get(cv) || {}).selected;
+  const halfW = Math.max(6, box.w / pts.length);
+
+  pts.forEach((p, i) => {
+    const px = X(p.t_ms);
+    const py = Y(p.cum_tokens);
+    const isHover = hover === i;
+    const isSel = sel === i;
+    if (isHover || isSel) {
+      // 竖直参考线
+      ctx.save();
+      ctx.strokeStyle = isSel ? cssVar('--a') : hexA(cssVar('--a'), .5);
+      ctx.lineWidth = isSel ? 1.5 : 1;
+      ctx.setLineDash(isSel ? [] : [3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(px, box.y);
+      ctx.lineTo(px, box.y + box.h);
+      ctx.stroke();
+      ctx.restore();
+      // 数据点
+      ctx.beginPath();
+      ctx.arc(px, py, isSel ? 5 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = cssVar('--a');
+      ctx.fill();
+      ctx.strokeStyle = cssVar('--card');
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    registerHit(cv, {
+      x: px - halfW, y: box.y, w: halfW * 2, h: box.h,
+      data: p,
+      tip: `<b>${fmt(p.t_ms, 0)} ms</b><br>` +
+           `累计 <b>${fmt(p.cum_tokens, 1)}</b> tok<br>` +
+           `瞬时 <b>${fmt(p.inst_tps, 1)}</b> tok/s<br>` +
+           `本桶 <b>${fmt(p.inst_tokens, 1)}</b> tok`,
+    });
   });
 
   ctx.font = '10px -apple-system, sans-serif';
@@ -898,6 +1093,8 @@ function drawTpsChart(data) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(peakTxt, pxx, pyy);
+
+  attachInteraction(cv, () => drawTpsChart(data));
 }
 
 function drawTtftChart(data) {
@@ -905,7 +1102,9 @@ function drawTtftChart(data) {
   const { ctx, w, h } = setupCanvas(cv);
   const box = { x: 42, y: 14, w: w - 58, h: h - 46 };
   const recs = (data && data.records) || [];
-  const vals = recs.filter((r) => r.ok).map((r) => r.ttft_ms).filter((v) => v != null);
+  const okRecs = recs.filter((r) => r.ok);
+  const vals = okRecs.map((r) => r.ttft_ms).filter((v) => v != null);
+  clearHits(cv);
   if (!vals.length) { drawEmpty(ctx, box, '暂无数据'); return; }
 
   const maxV = Math.max(...vals, 1);
@@ -922,12 +1121,28 @@ function drawTtftChart(data) {
   // 后者在请求数少（n=2/3）时中间会留大片空白，看起来像数据丢了。
   const slot = box.w / n;
   const bw = Math.max(2, Math.min(26, slot - 2));
+  const hover = getHover(cv);
+  const sel = (HIT_STATE.get(cv) || {}).selected;
+
   vals.forEach((v, i) => {
     const px = box.x + slot * i + slot / 2;
     const ph = (v / ttftTop) * box.h;
     const hot = v > outlierLine;
+    const isHover = hover === i;
+    const isSel = sel === i;
+    // 填充色只表达"正常/离群"两个语义，选中态用描边区分，
+    // 否则选中一根正常的柱子会变成蓝色，看着像第三种状态。
     ctx.fillStyle = hot ? hexA(cssVar('--b'), .85) : hexA(cssVar('--c'), .8);
     ctx.fillRect(px - bw / 2, box.y + box.h - ph, bw, ph);
+    if (isHover) {
+      ctx.fillStyle = hexA(hot ? cssVar('--b') : cssVar('--c'), .45);
+      ctx.fillRect(px - bw / 2, box.y + box.h - ph, bw, ph);
+    }
+    if (isSel) {
+      ctx.strokeStyle = cssVar('--text');
+      ctx.lineWidth = 2;
+      ctx.strokeRect(px - bw / 2 - 2, box.y + box.h - ph - 2, bw + 4, ph + 4);
+    }
   });
 
   // 离群阈值虚线
@@ -947,6 +1162,28 @@ function drawTtftChart(data) {
     ctx.textBaseline = 'bottom';
     ctx.fillText('离群线 ' + fmt(outlierLine, 0) + 'ms', box.x + box.w, ly - 2);
   }
+
+  // 命中区：每根柱子一条，悬停显示该请求完整计时
+  okRecs.forEach((r, i) => {
+    if (r.ttft_ms == null) return;
+    const px = box.x + slot * i + slot / 2;
+    const ph = (r.ttft_ms / ttftTop) * box.h;
+    const bits = [
+      `请求 <b>#${r.seq}</b>`,
+      `TTFT <b>${fmt(r.ttft_ms, 1)}</b> ms`,
+    ];
+    if (r.answer_ttft_ms != null) bits.push(`答案首字 <b>${fmt(r.answer_ttft_ms, 1)}</b> ms`);
+    bits.push(`总耗时 <b>${fmt(r.total_ms, 1)}</b> ms`);
+    bits.push(`解码 <b>${fmt(r.decode_tps, 2)}</b> tok/s`);
+    if (r.reasoning_tokens) bits.push(`思考 <b>${r.reasoning_tokens}</b> tok`);
+    registerHit(cv, {
+      x: px - slot / 2, y: box.y, w: slot, h: box.h,
+      data: r,
+      tip: bits.join('<br>'),
+    });
+  });
+
+  attachInteraction(cv, () => drawTtftChart(data), onTtftSelect);
 }
 
 /** 线性插值分位数，与后端 pct() 口径一致 */
@@ -965,6 +1202,7 @@ function drawItlChart(data) {
   const { ctx, w, h } = setupCanvas(cv);
   const box = { x: 42, y: 14, w: w - 58, h: h - 46 };
   const curve = data && data.itl_curve;
+  clearHits(cv);
   if (!curve || !curve.p50 || !curve.p50.length) { drawEmpty(ctx, box, '暂无数据'); return; }
 
   // 三条分位曲线必须等长且逐点对应，否则画出来是斜线
@@ -980,12 +1218,15 @@ function drawItlChart(data) {
   const itlTop = itlTicks.axisTop;
   drawFrame(ctx, box, 'token 序号', 'ITL (ms)', itlTicks);
 
+  const X = (i) => box.x + (i / Math.max(1, n - 1)) * box.w;
+  const Y = (v) => box.y + box.h - (v / itlTop) * box.h;
+
   const band = (arr, color) => {
     ctx.beginPath();
     arr.forEach((v, i) => {
       if (v == null) return;
-      const px = box.x + (i / Math.max(1, n - 1)) * box.w;
-      const py = box.y + box.h - (v / itlTop) * box.h;
+      const px = X(i);
+      const py = Y(v);
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     });
     ctx.strokeStyle = color;
@@ -995,6 +1236,49 @@ function drawItlChart(data) {
   band(p10, '#9aa4b5');
   band(p90, cssVar('--b'));
   band(p50, cssVar('--a'));
+
+  // 交互：按 x 位置找到最近的 token 序号，三条分位一起高亮
+  const hover = getHover(cv);
+  const sel = (HIT_STATE.get(cv) || {}).selected;
+  const active = sel >= 0 ? sel : hover;
+  if (active >= 0 && active < n) {
+    const px = X(active);
+    ctx.save();
+    ctx.strokeStyle = hexA(cssVar('--a'), .45);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(px, box.y);
+    ctx.lineTo(px, box.y + box.h);
+    ctx.stroke();
+    ctx.restore();
+    // 三个分位各画一个点
+    [[p10, '#9aa4b5'], [p50, cssVar('--a')], [p90, cssVar('--b')]].forEach(([arr, color]) => {
+      const v = arr[active];
+      if (v == null) return;
+      ctx.beginPath();
+      ctx.arc(px, Y(v), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+  }
+
+  // 命中区：按 x 分段，每段一个 token 序号
+  const segW = box.w / n;
+  for (let i = 0; i < n; i++) {
+    registerHit(cv, {
+      x: box.x + i * segW, y: box.y, w: segW, h: box.h,
+      data: { idx: i, p10: p10[i], p50: p50[i], p90: p90[i] },
+      tip: `第 <b>${i}</b> 个 token<br>` +
+           `p10 <b>${fmt(p10[i], 2)}</b> ms<br>` +
+           `p50 <b>${fmt(p50[i], 2)}</b> ms<br>` +
+           `p90 <b>${fmt(p90[i], 2)}</b> ms` +
+           (p90[i] != null && p50[i] != null && p90[i] - p50[i] > 0.01
+             ? `<br>抖动 p90−p50 = <b>${fmt(p90[i] - p50[i], 2)}</b> ms` : ''),
+    });
+  }
+
+  attachInteraction(cv, () => drawItlChart(data));
 }
 
 function drawPctChart(data) {
@@ -1002,6 +1286,7 @@ function drawPctChart(data) {
   const { ctx, w, h } = setupCanvas(cv);
   const box = { x: 42, y: 14, w: w - 58, h: h - 46 };
   const s = data && data.summary;
+  clearHits(cv);
   if (!s) { drawEmpty(ctx, box, '暂无数据'); return; }
 
   const labels = ['p50', 'p90', 'p95', 'p99'];
@@ -1014,20 +1299,45 @@ function drawPctChart(data) {
 
   const groupW = box.w / labels.length;
   const bw = groupW * 0.26;
+  const hover = getHover(cv);
+  const sel = (HIT_STATE.get(cv) || {}).selected;
+
   labels.forEach((lb, i) => {
     const cx = box.x + groupW * i + groupW / 2;
     const a = ttft[i] != null ? (ttft[i] / pctTop) * box.h : 0;
     const b = tpot[i] != null ? (tpot[i] / pctTop) * box.h : 0;
-    ctx.fillStyle = hexA(cssVar('--a'), .85);
+    const isHover = hover === i;
+    const isSel = sel === i;
+
+    // 填充色恒定，选中/悬停用亮度与描边表达，避免颜色语义混乱
+    ctx.fillStyle = hexA(cssVar('--a'), isHover || isSel ? 1 : .85);
     ctx.fillRect(cx - bw - 1, box.y + box.h - a, bw, a);
-    ctx.fillStyle = hexA(cssVar('--b'), .85);
+    ctx.fillStyle = hexA(cssVar('--b'), isHover || isSel ? 1 : .85);
     ctx.fillRect(cx + 1, box.y + box.h - b, bw, b);
+
+    if (isSel) {
+      ctx.strokeStyle = cssVar('--text');
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - bw - 1, box.y + box.h - Math.max(a, b) - 1, bw * 2 + 2, Math.max(a, b) + 2);
+    }
     ctx.fillStyle = cssVar('--muted');
     ctx.font = '10px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(lb, cx, box.y + box.h + 6);
+
+    registerHit(cv, {
+      x: cx - groupW / 2, y: box.y, w: groupW, h: box.h,
+      data: { label: lb, ttft: ttft[i], tpot: tpot[i] },
+      tip: `<b>${lb}</b> 分位<br>` +
+           `TTFT <b>${fmt(ttft[i], 1)}</b> ms<br>` +
+           `TPOT <b>${fmt(tpot[i], 2)}</b> ms/tok` +
+           (ttft[i] != null && tpot[i] != null
+             ? `<br>倍数 <b>${fmt(ttft[i] / tpot[i], 1)}</b>×` : ''),
+    });
   });
+
+  attachInteraction(cv, () => drawPctChart(data));
 }
 
 function drawEmpty(ctx, box, text) {
@@ -1045,6 +1355,30 @@ function drawAll(data) {
   drawTtftChart(data);
   drawItlChart(data);
   drawPctChart(data);
+  // 空数据时各图会在中途 return，跳过 attachInteraction。
+  // 这里兜底绑定一次，保证"没有数据"状态下点击/悬停也不报错。
+  ensureInteractionBound(data);
+}
+
+/** 确保四张图都绑上了交互事件（空数据时的兜底） */
+function ensureInteractionBound(data) {
+  const pairs = [
+    ['chartTps', () => drawTpsChart(data)],
+    ['chartTtft', () => drawTtftChart(data)],
+    ['chartItl', () => drawItlChart(data)],
+    ['chartPct', () => drawPctChart(data)],
+  ];
+  for (const [id, redraw] of pairs) {
+    const cv = $(id);
+    const st = HIT_STATE.get(cv);
+    if (!st) {
+      // 还没绑过：手动建一份并走一次 attachInteraction
+      clearHits(cv);
+      attachInteraction(cv, redraw, id === 'chartTtft' ? onTtftSelect : null);
+    } else if (!st.bound) {
+      attachInteraction(cv, redraw, id === 'chartTtft' ? onTtftSelect : null);
+    }
+  }
 }
 
 function hexA(color, alpha) {
@@ -1195,6 +1529,14 @@ function bind() {
   });
   $('provider').addEventListener('change', (e) => applyProvider(parseInt(e.target.value, 10)));
   $('fetchModelsBtn').addEventListener('click', fetchModels);
+  // 历史记录
+  $('historyClear').addEventListener('click', clearAllHistory);
+  $('historyExport').addEventListener('click', exportHistory);
+  $('historyToggle').addEventListener('click', () => {
+    const card = $('historyCard');
+    const collapsed = card.classList.toggle('collapsed');
+    $('historyToggle').textContent = collapsed ? '展开' : '收起';
+  });
   $('thinkingProvider').addEventListener('change', () => {
     $('thinkingFields').hidden = !$('thinkingProvider').value;
     refreshThinkingLevels();
@@ -1227,6 +1569,7 @@ function bind() {
   fillProviderSelect();   // 先填下拉，loadConfig 里要反查匹配
   bind();
   resetKpi();
+  renderHistory();
   loadConfig();
   pingHealth();
   drawAll(null);

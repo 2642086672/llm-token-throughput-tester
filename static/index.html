@@ -189,6 +189,22 @@
   <!-- ============ 右：结果区 ============ -->
   <section class="results">
 
+    <!-- 历史记录 -->
+    <div class="card history-card" id="historyCard">
+      <div class="card-head">
+        <h3>历史记录</h3>
+        <div class="head-tools">
+          <span class="muted" id="historyCount">0 条</span>
+          <button class="mini" id="historyExport">导出</button>
+          <button class="mini" id="historyToggle">收起</button>
+          <button class="mini" id="historyClear">清空</button>
+        </div>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">还没有历史记录，跑一次压测就会自动存下来</div>
+      </div>
+    </div>
+
     <!-- 关键指标卡 -->
     <div class="kpi-grid" id="kpiGrid">
       <div class="kpi">
@@ -315,6 +331,8 @@
   </div>
 </div>
 
+<script src="/static/history.js"></script>
+<script src="/static/chart.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

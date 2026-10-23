@@ -407,6 +407,95 @@ body.dark .src-th { background: rgba(139,92,246,.2); color: #a78bfa; }
   white-space: pre-wrap; word-break: break-word;
 }
 
+/* ---------- 历史记录 ---------- */
+.history-card.collapsed .history-list { display: none; }
+.history-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.history-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.h-item {
+  display: grid;
+  grid-template-columns: 88px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .12s;
+  border: 1px solid transparent;
+}
+.h-item:hover { background: var(--accent-soft); }
+.h-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.h-time {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+.h-main { min-width: 0; }
+.h-title {
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h-tps {
+  font-size: 13.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.h-tps span { font-size: 11px; font-weight: 500; color: var(--muted); }
+.h-del {
+  padding: 2px 7px;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.h-del:hover { color: var(--err); border-color: var(--err); }
+
+/* ---------- 图表 tooltip ---------- */
+.chart-tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .16);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chart-tip b { color: var(--accent); font-weight: 650; }
+body.dark .chart-tip { box-shadow: 0 6px 22px rgba(0, 0, 0, .5); }
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; }
